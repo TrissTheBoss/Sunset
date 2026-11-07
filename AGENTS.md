@@ -11,6 +11,7 @@
 
 ## Model and delegation governance
 
+- Role model roster: root/orchestrator `gpt-6.1-terra` / low; `requirements`, `framework`, and `governance` coders `gpt-6-luna` / low; reviewer `gpt-6.1-sol` / low. Templates do not change already-running sessions; root's active engine is unverified until selected in the UI (`/model`).
 - Follow `docs/AGENT_WORKFLOW.md` and `docs/agents/*.md` for role boundaries, routing, and review.
 - Use only the model and reasoning level assigned to the role. If unavailable, stop and report the issue; never substitute or silently change settings.
 - Do not delegate or spawn agents unless the project owner explicitly authorizes it.

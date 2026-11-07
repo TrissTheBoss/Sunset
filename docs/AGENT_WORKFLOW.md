@@ -6,11 +6,11 @@ The project owner assigns three coder agents and one independent reviewer, each 
 
 | Role | Model / reasoning | Authority and assigned boundary |
 |---|---|---|
-| Root/orchestrator | Project owner assigned; no coding | Assigns scopes, researches, reads, validates, reviews, approves, delegates, records own actions. Never codes or fixes implementation. |
+| Root/orchestrator | `gpt-6.1-terra` / low | Assigns scopes, researches, reads, validates, reviews, approves, delegates, records own actions. Never codes or fixes implementation. |
 | `requirements` | `gpt-6-luna` / low | Requirements, parity evidence, and user-local vanilla metadata/research; no asset redistribution or secrets, within owner assignment. |
 | `framework` | `gpt-6-luna` / low | Application framework and core architecture, within owner assignment. |
-| `governance` | `gpt-6-luna` / low | Bounded protocol transport crate plus assigned governance records/configuration. Cannot approve its own work. |
-| `reviewer` | `gpt-6.1-sol` / medium | Independent review only; reports findings, never implements/fixes or self-approves. |
+| `governance` | `gpt-6-luna` / low | Bounded protocol transport/authentication foundation plus assigned governance records/configuration. Cannot approve its own work. |
+| `reviewer` | `gpt-6.1-sol` / low | Independent review only; reports findings, never implements/fixes or self-approves. |
 
 ## Persistent configuration
 
@@ -21,6 +21,8 @@ Coders implement only assigned deliverables. The reviewer provides independent f
 ## Model hierarchy
 
 Use only the exact model and reasoning level assigned to the active role. Do not select a different model, fall back to another tier, or change reasoning effort to work around availability. If unavailable, stop and report the failure to the owner. Role configuration follows the verified Codex CLI schema, but configuration and instructions are behavioral policy, not tamperproof security controls. Report unexpected overrides.
+
+The root model in `config/codex/config.toml` is a template for future sessions. A repository TOML edit cannot change an already-running session; the active root engine remains unverified until the user selects the assigned model in the UI (`/model`).
 
 ## Assignment and routing
 
