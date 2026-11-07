@@ -30,10 +30,10 @@ Assignments identify an owner, scope, deliverables, constraints, and dependencie
 
 ### Token and coordination economy
 
-- Activate only coders with independent, ready work. Do not use all three for a trivial one-file or documentation-only change.
+- Activate one Luna/low coder by default; keep all three coder role configurations available. Start another coder only for clearly independent, ready work where speed materially matters. The root explicitly decides and records the reason. Do not use multiple coders for trivial one-file or documentation-only changes.
 - Assign each coder once per bounded goal, naming exclusive files, deliverables, acceptance criteria, and checks. Let the assignment finish; avoid routine status chasing, repeated reminders, and early redirection. Intervene for blockers, conflicts, material evidence, or user steering.
 - Keep coder milestone handoffs at 150 words maximum, blocker reports at 80 words maximum, and reviewer reports at 200 words maximum.
-- Review completed, author-checked changes. Reviewers give targeted findings and do not monitor drafts continuously. The author fixes findings; a separate follow-up review checks them.
+- Run the Sol/low reviewer at meaningful larger completed milestones or for a specific high-risk, security, or data-loss concern. The coder performs routine checks first. Preserve independent review before release and any required critical review. Review completed, author-checked changes only; reviewers give targeted findings and do not monitor drafts continuously. The author fixes findings; a separate follow-up review checks them.
 - Reuse evidence; use targeted `rg` first, batch independent reads, avoid rereading unchanged full documents/logs, and set output budgets.
 - Do not use short polling or status-only wake loops. Prefer completion notifications or waits on confirmed-live tool handles, bounded to 30–60 seconds and platform cadence. Do not repeatedly list agents or reread files to manufacture progress, and do not keep reviewers active while authors work.
 - Assign one owner for a full validation suite. Independent reviewers run only risk-relevant checks; do not duplicate full-suite runs absent a material reason.
