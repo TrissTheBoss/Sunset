@@ -1,0 +1,107 @@
+name: Foundation source prerelease
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Foundation prerelease tag, for example v0.1.0-dev.1"
+        required: true
+        type: string
+      source_ref:
+        description: "Reviewed full commit SHA to package"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-release:
+    name: Validate and publish source snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate release inputs
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v0\.1\.0-dev\.[0-9]+$ ]]; then
+            echo "Only v0.1.0-dev.N foundation prerelease tags are permitted." >&2
+            exit 1
+          fi
+          if [[ ! "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "source_ref must be a full 40-character commit SHA." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Confirm source and version
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_REF"
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$SOURCE_REF" origin/main; then
+            echo "source_ref must be reachable from main." >&2
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            existing_tag_commit="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+            if [[ "$existing_tag_commit" != "$SOURCE_REF" ]]; then
+              echo "The requested tag already points to a different commit." >&2
+              exit 1
+            fi
+          fi
+          python3 - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          package = tomllib.loads(Path("crates/sunset-foundation/Cargo.toml").read_text())
+          expected = os.environ["RELEASE_TAG"].removeprefix("v")
+          actual = package["package"]["version"]
+          if actual != expected:
+              raise SystemExit(f"tag version {expected} does not match crate version {actual}")
+          PY
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Validate source
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+
+      - name: Package repository source
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          archive="Sunset-${RELEASE_TAG}-source.zip"
+          git archive --format=zip --prefix="Sunset-${RELEASE_TAG}/" --output="$archive" HEAD
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+        id: source
+
+      - name: Publish non-playable prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          target_commitish: ${{ inputs.source_ref }}
+          name: "Sunset ${{ inputs.tag }} — Foundation source snapshot (non-playable)"
+          prerelease: true
+          draft: false
+          generate_release_notes: false
+          fail_on_unmatched_files: true
+          body: |
+            **Foundation source snapshot only. This is not a playable game and does not claim Minecraft Java Edition 26.3 parity, performance, asset import, or multiplayer support.**
+
+            The attached archive contains repository source only; no compiled game binary is provided. The exact source commit is `${{ inputs.source_ref }}`. CI formatting, lint, and workspace tests passed for this commit.
+          files: ${{ steps.source.outputs.archive }}
