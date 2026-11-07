@@ -2,14 +2,14 @@
 
 ## Roles
 
-The project owner assigns three coder agents and one independent reviewer, each with the exact model and medium reasoning shown below. Governance is one of the three coders. Each agent follows its role file and corresponding persistent TOML template. The root/orchestrator assigns and integrates work, reads and researches, validates, reviews, approves, delegates, and maintains the project-wide action log. Root does not implement or fix code; implementation is owned by the assigned coders.
+The project owner assigns three coder agents and one independent reviewer, each with the exact model and reasoning shown below. Governance is one of the three coders. Each agent follows its role file and corresponding persistent TOML template. The root/orchestrator assigns and integrates work, reads and researches, validates, reviews, approves, delegates, and maintains the project-wide action log. Root does not implement or fix code; implementation is owned by the assigned coders.
 
 | Role | Model / reasoning | Authority and assigned boundary |
 |---|---|---|
 | Root/orchestrator | Project owner assigned; no coding | Assigns scopes, researches, reads, validates, reviews, approves, delegates, records own actions. Never codes or fixes implementation. |
-| `requirements` | `gpt-6-luna` / medium | Requirements, parity inventory, and specification, within owner assignment. |
-| `framework` | `gpt-6-luna` / medium | Application framework and core architecture, within owner assignment. |
-| `governance` | `gpt-6-luna` / medium | Governance docs, source/decision/action records, and agent configuration. Cannot approve its own work. |
+| `requirements` | `gpt-6-luna` / low | Requirements, parity evidence, and user-local vanilla metadata/research; no asset redistribution or secrets, within owner assignment. |
+| `framework` | `gpt-6-luna` / low | Application framework and core architecture, within owner assignment. |
+| `governance` | `gpt-6-luna` / low | Bounded protocol transport crate plus assigned governance records/configuration. Cannot approve its own work. |
 | `reviewer` | `gpt-6.1-sol` / medium | Independent review only; reports findings, never implements/fixes or self-approves. |
 
 ## Persistent configuration
@@ -25,6 +25,20 @@ Use only the exact model and reasoning level assigned to the active role. Do not
 ## Assignment and routing
 
 Assignments identify an owner, scope, deliverables, constraints, and dependencies. Work outside scope requires owner direction. Do not create subagents or reassign work unless explicitly authorized. Send cross-scope findings to the owner rather than editing another role's deliverables.
+
+### Token and coordination economy
+
+- Activate only coders with independent, ready work. Do not use all three for a trivial one-file or documentation-only change.
+- Assign each coder once per bounded goal, naming exclusive files, deliverables, acceptance criteria, and checks. Let the assignment finish; avoid routine status chasing, repeated reminders, and early redirection. Intervene for blockers, conflicts, material evidence, or user steering.
+- Keep coder milestone handoffs at 150 words maximum, blocker reports at 80 words maximum, and reviewer reports at 200 words maximum.
+- Review completed, author-checked changes. Reviewers give targeted findings and do not monitor drafts continuously. The author fixes findings; a separate follow-up review checks them.
+- Reuse evidence; use targeted `rg` first, batch independent reads, avoid rereading unchanged full documents/logs, and set output budgets.
+- Do not use short polling or status-only wake loops. Prefer completion notifications or waits on confirmed-live tool handles, bounded to 30–60 seconds and platform cadence. Do not repeatedly list agents or reread files to manufacture progress, and do not keep reviewers active while authors work.
+- Assign one owner for a full validation suite. Independent reviewers run only risk-relevant checks; do not duplicate full-suite runs absent a material reason.
+- Keep one concise action-log checkpoint per bounded task and record material decisions only. Do not log conversational progress chatter.
+- Keep bounded batches intact and preserve the full P0 scope. Do not narrow work to reduce coordination overhead.
+- Do not set an arbitrary hard token budget unless the user gives a number. Progress updates must meet platform cadence using known evidence, without extra agent pings.
+- Do not escalate model or reasoning effort without explicit authorization. After a role setting changes, do not reuse sessions launched at earlier settings; start replacements at the assigned settings with a short handoff and no full-history inheritance.
 
 ## Review protocol
 

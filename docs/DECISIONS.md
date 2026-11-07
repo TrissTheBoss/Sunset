@@ -1,9 +1,16 @@
 # Decisions
 
+## D-012 — Bounded agent coordination and token economy
+
+**Status:** Adopted  
+**Decision:** Use only ready, independent coder assignments; scope each assignment once; keep handoffs concise; review completed author-checked work; reuse evidence; avoid duplicate validation and routine coordination chatter. Coder role effort is `low`; the reviewer remains independently configured at `gpt-6.1-sol` / medium.  
+**Rationale:** Reduce avoidable coordination and repeated context use while preserving complete P0 scope, independent review, and meaningful validation.  
+**Consequence:** Do not impose a hard token budget without a user-provided number. Existing sessions launched at different settings must be replaced at the assigned settings, with a short handoff and no full-history inheritance.
+
 ## D-001 — Vanilla compatibility before performance
 
 **Status:** Adopted  
-**Decision:** Prioritize 100% vanilla Minecraft Java Edition 26.3 parity, including GUI simulation, integrated-server protocol/save behavior, and baseline rendering, before performance.  
+**Decision:** Prioritize 100% vanilla Minecraft Java Edition 26.3 parity, including GUI, movement, physics, client and integrated-server simulation, network protocol, world generation, saves, and baseline rendering, before performance.  
 **Rationale:** Speed that changes expected behavior does not fulfill the compatibility goal.  
 **Consequence:** Compatibility claims require evidence; optimization must preserve verified behavior.
 
@@ -41,6 +48,27 @@
 **Decision:** Local import is not an authentication bypass and does not establish blanket legal permission to extract, use, or redistribute assets.  
 **Rationale:** Asset access, account authentication, and rights are separate questions.  
 **Consequence:** Keep these boundaries explicit and refer users to applicable rights-holder terms.
+
+## D-009 — Do not infer the 26.3 protocol number
+
+**Status:** Adopted  
+**Decision:** Protocol IDs must be sourced from verified local vanilla metadata or equivalent authoritative evidence; never guess or silently bake an unverified integer into the client.  
+**Rationale:** The inspected local 26.3 `version.json` contains `id`, `name`, and `stable`, but no protocol integer.  
+**Consequence:** Status API accepts a caller-supplied nonnegative protocol number. No 26.3 default or parity claim exists until the version mapping is verified.
+
+## D-010 — Status ping is not authenticated gameplay
+
+**Status:** Adopted  
+**Decision:** Keep status/ping behavior distinct from login, account authentication, encryption, compression, configuration, and play.  
+**Rationale:** A server-list response does not prove login compatibility, account entitlement, or gameplay parity.  
+**Consequence:** Report those phases as open work; do not label the status client playable or fully compatible.
+
+## D-011 — Bounded transport and resolver limits
+
+**Status:** Adopted  
+**Decision:** Bound packet/string sizes, connection/read/write deadlines, and system DNS work through one bounded resolver worker and queue.  
+**Rationale:** Untrusted peers, slow-drip sockets, and stuck OS DNS must not permit unbounded buffers or spawned worker growth.  
+**Consequence:** A blocked platform resolver can occupy the one DNS worker; later requests fail fast as busy until it returns. Do not claim OS DNS work is cancellable.
 
 ## D-005 — Evidence-based claims and unofficial status
 
