@@ -32,6 +32,10 @@ No gameplay or compatibility tests exist.
 
 The new release workflow was reviewed structurally but was not dispatched; no release was published.
 
+## Publication outcome
+
+After the orchestrator authorized publication and the independent reviewer confirmed the final follow-up, published the reviewed snapshot to the public GitHub repository through its connector. The bootstrap commit was `a16ce8f4432bce374efae1e6e296e1ae1dd68c0b`; the complete reviewed snapshot commit is `de1d19ba1f6df606364bd92cda968633896ddc30`. It contains 38 blobs: the local reviewed source inventory plus five mapped `.codex` paths. GitHub readback confirmed the branch head and exact blob-path set. The local `.git` directory remains uncommitted because the sandbox denied `.git/config` writes; the remote API snapshot is authoritative for publication. The source prerelease was not dispatched. GitHub Actions reported zero runs at the time of verification, so remote CI status is pending.
+
 ## Git setup limitation
 
 Initialized the repository on `main`. Adding the requested GitHub remote was blocked because this sandbox cannot write `.git/config` (permission denied); the current account also differs from the workspace owner, so Git reports dubious ownership. No global `safe.directory` exception was added. Root/maintainer can set the remote after the workspace permissions are corrected.
