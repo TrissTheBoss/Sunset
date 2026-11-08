@@ -48,4 +48,22 @@ implemented and validated; they are not a claim of vanilla parity unless stated.
   worldgen/numeric) and the shader/post-effect path remain blocked pending
   target artifacts.
 
+## M2 fixes — rendering and movement polish
+
+- Switched the block atlas to nearest (point) filtering: 16x16 target textures
+  render crisp instead of bilinear-blurred, and colors no longer bleed across
+  atlas tiles (the yellow edge glow).
+- Corrected slab side-face UVs to use only the matching half of the
+  `*_slab_side` texture (bottom slab v∈[0.5,1], top slab v∈[0,0.5]); previously
+  the full texture was squashed onto the half-height face.
+- Sized the selection outline to the block's collision shape, so slabs outline
+  their half-height box instead of a full cube.
+- Fixed face culling: only full opaque cubes fully occlude neighbors (slabs no
+  longer leave see-through gaps), and transparent blocks now cull each other
+  (no glass-glass interior faces).
+- Fixed the first-person camera eye height: it was adding the full eye height
+  to the collision-box center, placing the eye ~0.9 blocks too high.
+- Raised walk speed (4.317 → 5.6) and jump velocity (8.4 → 9.8), so the player
+  can clear a one-block ledge; added a `jump_clears_one_block` regression test.
+
 

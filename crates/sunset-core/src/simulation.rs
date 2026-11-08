@@ -10,9 +10,10 @@ use crate::world::World;
 /// Downward acceleration (blocks/s^2).
 pub const GRAVITY: f32 = 32.0;
 /// Horizontal walk speed (blocks/s).
-pub const WALK_SPEED: f32 = 4.317;
-/// Upward velocity applied on jump (blocks/s).
-pub const JUMP_VELOCITY: f32 = 8.4;
+pub const WALK_SPEED: f32 = 5.6;
+/// Upward velocity applied on jump (blocks/s). 9.8 yields ~1.25 blocks of
+/// discrete jump height, enough to climb a one-block ledge.
+pub const JUMP_VELOCITY: f32 = 9.8;
 
 /// The authoritative game state: a world and a player, stepped at a fixed tick.
 pub struct Simulation {
@@ -170,5 +171,33 @@ mod tests {
         );
         // `pos` is the collision-box center (feet at y=5.0, center at ~5.9).
         assert!((p.y - 5.9).abs() < 0.5, "player not on ground: {p:?}");
+    }
+
+    #[test]
+    fn jump_clears_one_block() {
+        let world = fixture::building_yard();
+        let player = Player::new(glam::Vec3::new(8.0, 5.5, 16.0), 0.5, -0.25);
+        let mut sim = Simulation::new(world, player);
+        // Settle onto the ground first.
+        for _ in 0..(20 * 3) {
+            sim.step(&PlayerIntent::default(), DT);
+        }
+        let ground_center = sim.player.pos.y;
+        // Jump once, then track the peak of the box center.
+        sim.step(
+            &PlayerIntent {
+                jump: true,
+                ..Default::default()
+            },
+            DT,
+        );
+        let mut peak = sim.player.pos.y;
+        for _ in 0..(20 * 2) {
+            sim.step(&PlayerIntent::default(), DT);
+            peak = peak.max(sim.player.pos.y);
+        }
+        // Feet must rise more than one block above the ground.
+        let feet_rise = peak - ground_center;
+        assert!(feet_rise > 1.0, "jump too short: {feet_rise}");
     }
 }

@@ -8,7 +8,7 @@ use bevy::window::{CursorGrabMode, CursorOptions};
 
 use sunset_core::intent::BlockAction;
 use sunset_core::physics;
-use sunset_core::player::PLAYER_EYE_HEIGHT;
+use sunset_core::player::{PLAYER_EYE_HEIGHT, PLAYER_HEIGHT};
 
 use crate::renderer::{Target, TargetHit};
 use crate::{Intent, Session};
@@ -133,7 +133,9 @@ pub fn camera_system(
     // fixed-tick states for smooth rendering.
     let alpha = time.overstep_fraction();
     let pos = session.0.prev_pos.lerp(session.0.player.pos, alpha);
-    let eye = pos + Vec3::new(0.0, PLAYER_EYE_HEIGHT, 0.0);
+    // `pos` is the collision-box center, so the eye sits `eye_height` above the
+    // feet (matching `Player::eye_pos`, which the raycast already uses).
+    let eye = pos + Vec3::new(0.0, PLAYER_EYE_HEIGHT - PLAYER_HEIGHT * 0.5, 0.0);
     let rot = Quat::from_euler(
         EulerRot::ZYX,
         0.0,

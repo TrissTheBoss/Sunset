@@ -7,7 +7,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 
-use sunset_core::block::{block_def, is_transparent, occludes, BlockState, AIR};
+use sunset_core::block::{block_def, is_transparent, occludes, BlockState, Shape, AIR};
 use sunset_core::chunk::{Chunk, CHUNK_HEIGHT, CHUNK_SIZE};
 use sunset_core::world::World as GameWorld;
 
@@ -253,12 +253,15 @@ pub fn remesh_system(
     }
 }
 
-/// Draw a wireframe selection outline around the targeted block.
-pub fn outline_system(target: Res<Target>, mut gizmos: Gizmos) {
+/// Draw a wireframe selection outline around the targeted block, sized to the
+/// block's actual collision shape (so slabs outline their half-height box).
+pub fn outline_system(target: Res<Target>, session: Res<Session>, mut gizmos: Gizmos) {
     if let Some(hit) = &target.0 {
-        let min = Vec3::new(hit.pos[0] as f32, hit.pos[1] as f32, hit.pos[2] as f32);
-        let max = min + Vec3::ONE;
-        draw_box(&mut gizmos, min, max, Color::BLACK);
+        let state = session.0.world.get_block(hit.pos[0], hit.pos[1], hit.pos[2]);
+        if let Some((bmin, bmax)) = block_def(state).collision_box() {
+            let base = Vec3::new(hit.pos[0] as f32, hit.pos[1] as f32, hit.pos[2] as f32);
+            draw_box(&mut gizmos, base + bmin, base + bmax, Color::BLACK);
+        }
     }
 }
 
@@ -329,8 +332,18 @@ fn build_chunk_meshes(
 
                 for face in 0..6 {
                     let [nx, ny, nz] = FACE_NORMALS[face];
-                    if occludes(world.get_block(wx + nx, wy + ny, wz + nz)) {
-                        continue;
+                    let neighbor = world.get_block(wx + nx, wy + ny, wz + nz);
+                    if neighbor != AIR {
+                        if is_transparent(state) {
+                            // Transparent faces are hidden against other
+                            // transparent blocks (glass-glass), but stay visible
+                            // against air and opaque blocks.
+                            if is_transparent(neighbor) {
+                                continue;
+                            }
+                        } else if occludes(neighbor) {
+                            continue;
+                        }
                     }
                     let shade = FACE_SHADE[face];
                     let corners = face_corners(
@@ -347,6 +360,14 @@ fn build_chunk_meshes(
                             if let Some(tex) = ft.texture_for_face([nx, ny, nz], def.end_axis) {
                                 if let Some(&rect) = atlas.uv.get(tex) {
                                     let uvs = FACE_UVS[face].map(|[u, v]| {
+                                        // Slab side faces use only half of the
+                                        // `*_slab_side` texture (it packs both
+                                        // the top and bottom slab halves).
+                                        let v = match def.shape {
+                                            Shape::SlabBottom if face >= 2 => 0.5 + 0.5 * v,
+                                            Shape::SlabTop if face >= 2 => 0.5 * v,
+                                            _ => v,
+                                        };
                                         [
                                             rect[0] + u * (rect[2] - rect[0]),
                                             rect[1] + v * (rect[3] - rect[1]),

@@ -217,9 +217,11 @@ pub fn has_collision(state: BlockState) -> bool {
 }
 
 /// Whether a block fully occludes the faces of adjacent blocks (i.e. an
-/// adjacent face against it should not be drawn).
+/// adjacent face against it should not be drawn). Only full opaque cubes fully
+/// occlude; partial blocks (slabs) leave the rest of the adjacent face visible.
 pub fn occludes(state: BlockState) -> bool {
-    block_def(state).opacity == Opacity::Opaque
+    let def = block_def(state);
+    def.opacity == Opacity::Opaque && def.shape == Shape::FullCube
 }
 
 /// Whether a block is transparent (rendered with alpha, does not occlude).

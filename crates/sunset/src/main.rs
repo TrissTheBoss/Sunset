@@ -10,6 +10,7 @@ use std::path::Path;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
+use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
@@ -85,7 +86,7 @@ fn setup_assets(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     match mcassets::load_assets(&dir) {
         Ok(loaded) => {
             let (w, h) = (loaded.atlas.width(), loaded.atlas.height());
-            let image = Image::new(
+            let mut image = Image::new(
                 Extent3d {
                     width: w,
                     height: h,
@@ -96,6 +97,9 @@ fn setup_assets(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                 TextureFormat::Rgba8UnormSrgb,
                 RenderAssetUsages::RENDER_WORLD,
             );
+            // Nearest (point) filtering keeps 16x16 block textures crisp and
+            // stops colors from bleeding across atlas tiles.
+            image.sampler = ImageSampler::nearest();
             let handle = images.add(image);
             commands.insert_resource(renderer::BlockAtlas {
                 face_textures: loaded.face_textures,
