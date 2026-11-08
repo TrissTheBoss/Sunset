@@ -34,13 +34,10 @@ pub struct BlockAtlas {
     pub handle: Handle<Image>,
 }
 
-/// Marker for a spawned chunk mesh, carrying identity, revision, and which pass
-/// (opaque vs transparent) it belongs to, so edits can trigger a targeted
-/// re-mesh (PRD 4.6).
+/// Marker for the combined world mesh, carrying the total chunk revision it was
+/// built from and which pass (opaque vs transparent) it belongs to.
 #[derive(Component)]
-pub struct ChunkMesh {
-    pub cx: i32,
-    pub cz: i32,
+pub struct WorldMesh {
     pub revision: u64,
     pub transparent: bool,
 }
@@ -126,6 +123,22 @@ impl MeshData {
             .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
+    /// Append another mesh's data, offsetting positions by `(ox, 0, oz)`. This
+    /// lets per-chunk meshes be combined into one world mesh so the renderer
+    /// issues a single draw call per pass instead of one per chunk.
+    fn merge(&mut self, other: MeshData, ox: f32, oz: f32) {
+        let base = self.positions.len() as u32;
+        for (i, p) in other.positions.iter().enumerate() {
+            self.positions.push([p[0] + ox, p[1], p[2] + oz]);
+            self.normals.push(other.normals[i]);
+            self.colors.push(other.colors[i]);
+            self.uvs.push(other.uvs[i]);
+        }
+        for idx in other.indices {
+            self.indices.push(base + idx);
+        }
+    }
+
     fn is_empty(&self) -> bool {
         self.indices.is_empty()
     }
@@ -174,6 +187,34 @@ const FACE_UVS: [[[f32; 2]; 4]; 6] = [
     [[0.0, 1.0], [0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
 ];
 
+/// For each face: `(normal axis, tangent1 axis, tangent2 axis)` using
+/// `x=0, y=1, z=2`. `tangent1` maps to the texture's horizontal (u) direction
+/// and `tangent2` to the vertical (v) direction, matching `FACE_UVS`.
+const FACE_AXES: [(usize, usize, usize); 6] = [
+    (1, 0, 2), // +Y: normal Y, tangents X and Z
+    (1, 0, 2), // -Y
+    (0, 2, 1), // +X: normal X, tangents Z and Y
+    (0, 2, 1), // -X
+    (2, 0, 1), // +Z: normal Z, tangents X and Y
+    (2, 0, 1), // -Z
+];
+
+/// Whether a face of `state` (whose neighbor in that face's direction is
+/// `neighbor`) should be drawn.
+fn face_visible(state: BlockState, neighbor: BlockState) -> bool {
+    if neighbor == AIR {
+        return true;
+    }
+    if is_transparent(state) {
+        // Transparent faces are hidden against other transparent blocks
+        // (glass-glass), but stay visible against opaque blocks.
+        !is_transparent(neighbor)
+    } else {
+        // Opaque faces are hidden against opaque full cubes.
+        !occludes(neighbor)
+    }
+}
+
 pub fn spawn_chunk_meshes(
     mut commands: Commands,
     session: Res<Session>,
@@ -199,57 +240,74 @@ pub fn spawn_chunk_meshes(
         ..default()
     });
 
-    let world = &session.0.world;
-    for chunk in world.chunks() {
-        let (opaque, transparent) = build_chunk_meshes(world, chunk, atlas.as_deref());
-        let ox = (chunk.cx * CHUNK_SIZE as i32) as f32;
-        let oz = (chunk.cz * CHUNK_SIZE as i32) as f32;
-        let tf = Transform::from_xyz(ox, 0.0, oz);
+    // Combine all chunks into one mesh per pass (a single draw call each).
+    let (opaque, transparent, revision) = build_world_meshes(&session.0.world, atlas.as_deref());
+    commands.spawn((
+        Mesh3d(meshes.add(opaque.build())),
+        MeshMaterial3d(opaque_mat),
+        WorldMesh {
+            revision,
+            transparent: false,
+        },
+    ));
+    if !transparent.is_empty() {
         commands.spawn((
-            Mesh3d(meshes.add(opaque.build())),
-            MeshMaterial3d(opaque_mat.clone()),
-            tf,
-            ChunkMesh {
-                cx: chunk.cx,
-                cz: chunk.cz,
-                revision: chunk.revision,
-                transparent: false,
+            Mesh3d(meshes.add(transparent.build())),
+            MeshMaterial3d(transparent_mat),
+            WorldMesh {
+                revision,
+                transparent: true,
             },
         ));
-        if !transparent.is_empty() {
-            commands.spawn((
-                Mesh3d(meshes.add(transparent.build())),
-                MeshMaterial3d(transparent_mat.clone()),
-                tf,
-                ChunkMesh {
-                    cx: chunk.cx,
-                    cz: chunk.cz,
-                    revision: chunk.revision,
-                    transparent: true,
-                },
-            ));
-        }
     }
 }
 
-/// Re-mesh any chunk whose authoritative revision has changed since it was last
-/// built (block edits).
+/// Build the combined opaque and transparent meshes for the whole world, along
+/// with the summed chunk revision used for change detection.
+fn build_world_meshes(
+    world: &GameWorld,
+    atlas: Option<&BlockAtlas>,
+) -> (MeshData, MeshData, u64) {
+    let mut opaque = MeshData::new();
+    let mut transparent = MeshData::new();
+    let mut revision = 0u64;
+    for chunk in world.chunks() {
+        let (o, t) = build_chunk_meshes(world, chunk, atlas);
+        let ox = (chunk.cx * CHUNK_SIZE as i32) as f32;
+        let oz = (chunk.cz * CHUNK_SIZE as i32) as f32;
+        opaque.merge(o, ox, oz);
+        transparent.merge(t, ox, oz);
+        revision = revision.wrapping_add(chunk.revision);
+    }
+    (opaque, transparent, revision)
+}
+
+/// Re-mesh the combined world mesh when any chunk's revision has changed.
 pub fn remesh_system(
     session: Res<Session>,
     atlas: Option<Res<BlockAtlas>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut query: Query<(&mut ChunkMesh, &mut Mesh3d)>,
+    mut query: Query<(&mut WorldMesh, &mut Mesh3d)>,
 ) {
     let world = &session.0.world;
-    for (mut cm, mut mesh3d) in &mut query {
-        if let Some(chunk) = world.get_chunk(cm.cx, cm.cz) {
-            if chunk.revision != cm.revision {
-                let (opaque, transparent) = build_chunk_meshes(world, chunk, atlas.as_deref());
-                let data = if cm.transparent { transparent } else { opaque };
-                *mesh3d = Mesh3d(meshes.add(data.build()));
-                cm.revision = chunk.revision;
-            }
-        }
+    let mut revision = 0u64;
+    for chunk in world.chunks() {
+        revision = revision.wrapping_add(chunk.revision);
+    }
+    if query.iter().all(|(wm, _)| wm.revision == revision) {
+        return;
+    }
+
+    let (opaque, transparent, _) = build_world_meshes(world, atlas.as_deref());
+    let opaque_handle = meshes.add(opaque.build());
+    let transparent_handle = meshes.add(transparent.build());
+    for (mut wm, mut mesh3d) in &mut query {
+        *mesh3d = Mesh3d(if wm.transparent {
+            transparent_handle.clone()
+        } else {
+            opaque_handle.clone()
+        });
+        wm.revision = revision;
     }
 }
 
@@ -295,6 +353,143 @@ fn draw_box(gizmos: &mut Gizmos, min: Vec3, max: Vec3, color: Color) {
     }
 }
 
+/// Greedy-mesh one face direction for full-cube blocks: sweep each plane
+/// perpendicular to the face normal and merge runs of coplanar same-material
+/// faces into maximal rectangles, collapsing large flat surfaces to one quad
+/// per run instead of one quad per block.
+#[allow(clippy::too_many_arguments)]
+fn greedy_face(
+    world: &GameWorld,
+    chunk: &Chunk,
+    atlas: Option<&BlockAtlas>,
+    base_x: i32,
+    base_z: i32,
+    face: usize,
+    opaque: &mut MeshData,
+    transparent: &mut MeshData,
+) {
+    let [nx, ny, nz] = FACE_NORMALS[face];
+    let shade = FACE_SHADE[face];
+    let (na, ta, tb) = FACE_AXES[face];
+    let n_dim = if na == 1 { CHUNK_HEIGHT } else { CHUNK_SIZE };
+    let a_dim = if ta == 1 { CHUNK_HEIGHT } else { CHUNK_SIZE };
+    let b_dim = if tb == 1 { CHUNK_HEIGHT } else { CHUNK_SIZE };
+
+    for plane in 0..n_dim {
+        let mut mask: Vec<Option<(BlockState, Option<[f32; 4]>)>> = vec![None; a_dim * b_dim];
+        for a in 0..a_dim {
+            for b in 0..b_dim {
+                let mut c = [0usize; 3];
+                c[na] = plane;
+                c[ta] = a;
+                c[tb] = b;
+                let (x, y, z) = (c[0], c[1], c[2]);
+                let state = chunk.get(x, y, z);
+                if state == AIR {
+                    continue;
+                }
+                let def = block_def(state);
+                if def.shape != Shape::FullCube {
+                    continue;
+                }
+                let neighbor = world.get_block(
+                    base_x + x as i32 + nx,
+                    y as i32 + ny,
+                    base_z + z as i32 + nz,
+                );
+                if !face_visible(state, neighbor) {
+                    continue;
+                }
+                let rect = atlas
+                    .and_then(|at| at.face_textures.get(&state))
+                    .and_then(|ft| ft.texture_for_face([nx, ny, nz], def.end_axis))
+                    .and_then(|tex| atlas.and_then(|at| at.uv.get(tex)).copied());
+                mask[a * b_dim + b] = Some((state, rect));
+            }
+        }
+
+        let mut visited = vec![false; a_dim * b_dim];
+        for a in 0..a_dim {
+            for b in 0..b_dim {
+                let idx = a * b_dim + b;
+                if visited[idx] {
+                    continue;
+                }
+                let Some(cell) = mask[idx] else {
+                    continue;
+                };
+                let (state, rect) = cell;
+                let mut w = 1;
+                while a + w < a_dim
+                    && !visited[(a + w) * b_dim + b]
+                    && mask[(a + w) * b_dim + b] == Some(cell)
+                {
+                    w += 1;
+                }
+                let mut h = 1;
+                'grow: while b + h < b_dim {
+                    for da in 0..w {
+                        if visited[(a + da) * b_dim + (b + h)]
+                            || mask[(a + da) * b_dim + (b + h)] != Some(cell)
+                        {
+                            break 'grow;
+                        }
+                    }
+                    h += 1;
+                }
+                for da in 0..w {
+                    for db in 0..h {
+                        visited[(a + da) * b_dim + (b + db)] = true;
+                    }
+                }
+                let def = block_def(state);
+                let target = if is_transparent(state) {
+                    &mut *transparent
+                } else {
+                    &mut *opaque
+                };
+                let normal = [nx as f32, ny as f32, nz as f32];
+                let dir = FACE_NORMALS[face][na];
+                let mut mn = [0.0f32; 3];
+                let mut mx = [0.0f32; 3];
+                let n_coord = plane as f32 + if dir > 0 { 1.0 } else { 0.0 };
+                mn[na] = n_coord;
+                mx[na] = n_coord;
+                mn[ta] = a as f32;
+                mx[ta] = (a + w) as f32;
+                mn[tb] = b as f32;
+                mx[tb] = (b + h) as f32;
+                let corners = face_corners(Vec3::from_array(mn), Vec3::from_array(mx), face);
+                if let Some(rect) = rect {
+                    let uvs = [0usize, 1, 2, 3].map(|i| {
+                        let [u, v] = FACE_UVS[face][i];
+                        [
+                            rect[0] + u * w as f32 * (rect[2] - rect[0]),
+                            rect[1] + v * h as f32 * (rect[3] - rect[1]),
+                        ]
+                    });
+                    target.add_face(corners, uvs, normal, [shade, shade, shade, 1.0]);
+                } else {
+                    let fc = def.face_color(FACE_NORMALS[face]);
+                    let alpha = if is_transparent(state) { 0.45 } else { 1.0 };
+                    target.add_face(
+                        corners,
+                        [[0.0, 0.0]; 4],
+                        normal,
+                        [
+                            fc[0] as f32 / 255.0 * shade,
+                            fc[1] as f32 / 255.0 * shade,
+                            fc[2] as f32 / 255.0 * shade,
+                            alpha,
+                        ],
+                    );
+                }
+            }
+        }
+    }
+}
+
+
 /// Build the opaque and transparent meshes for one chunk, emitting only faces
 /// that border a non-occluding block (including across chunk boundaries). When
 /// a target texture atlas is available, faces are textured; otherwise they fall
@@ -310,6 +505,13 @@ fn build_chunk_meshes(
     let base_x = chunk.cx * CHUNK_SIZE as i32;
     let base_z = chunk.cz * CHUNK_SIZE as i32;
 
+    // Greedy-mesh full cubes first (the bulk of the geometry).
+    for face in 0..6 {
+        greedy_face(world, chunk, atlas, base_x, base_z, face, &mut opaque, &mut transparent);
+    }
+
+    // Non-full-cube blocks (slabs) are meshed per-face below; their faces are
+    // shorter than a block, so they can't be merged safely.
     for y in 0..CHUNK_HEIGHT {
         for z in 0..CHUNK_SIZE {
             for x in 0..CHUNK_SIZE {
@@ -318,6 +520,10 @@ fn build_chunk_meshes(
                     continue;
                 }
                 let def = block_def(state);
+                // Full cubes are already greedy-meshed above.
+                if def.shape == Shape::FullCube {
+                    continue;
+                }
                 let Some((bmin, bmax)) = def.collision_box() else {
                     continue;
                 };

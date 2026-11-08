@@ -4,6 +4,7 @@
 
 use bevy::input::mouse::{AccumulatedMouseMotion, MouseButton};
 use bevy::prelude::*;
+use bevy::render::view::Msaa;
 use bevy::window::{CursorGrabMode, CursorOptions};
 
 use sunset_core::intent::BlockAction;
@@ -28,6 +29,9 @@ pub fn spawn_camera(mut commands: Commands) {
         IsDefaultUiCamera,
         Transform::default(),
         PlayerCamera,
+        // No multisample antialiasing: removes 4x fill-rate cost, which matters
+        // for high-FPS voxel rendering.
+        Msaa::Off,
     ));
 }
 

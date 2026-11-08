@@ -160,6 +160,8 @@ pub fn update_hud(
     session: Res<Session>,
     mut text_query: Query<&mut TextSpan, With<HudText>>,
     mut slot_query: Query<(&HotbarSlot, &mut BorderColor)>,
+    mut frame: Local<u32>,
+    mut cached_low: Local<String>,
 ) {
     stats.record(time.delta_secs());
 
@@ -172,10 +174,16 @@ pub fn update_hud(
         .average_fps()
         .map(|v| format!("{v:.1}"))
         .unwrap_or_else(|| "n/a".into());
-    let low = stats
-        .low_01_fps()
-        .map(|v| format!("{v:.1}"))
-        .unwrap_or_else(|| "n/a".into());
+    // The 0.1%-low sorts the whole 1000-frame window, so recompute it only
+    // every 16 frames and cache the result.
+    *frame = frame.wrapping_add(1);
+    if *frame == 1 || *frame % 16 == 0 {
+        *cached_low = stats
+            .low_01_fps()
+            .map(|v| format!("{v:.1}"))
+            .unwrap_or_else(|| "n/a".into());
+    }
+    let low = &*cached_low;
 
     for mut span in &mut text_query {
         **span = format!(
