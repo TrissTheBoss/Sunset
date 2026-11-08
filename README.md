@@ -61,3 +61,8 @@ See `PRD.md` for the full requirements and `PARITY_MATRIX.md` for coverage.
 Development process and the milestone commit/push rule are in
 `CONTRIBUTING.md`; browseable documentation lives on the
 [GitHub wiki](https://github.com/TrissTheBoss/Sunset/wiki).
+
+# Trademark and Copyright Notice
+> Sunset is an independent, unaffiliated project and is not sponsored, endorsed, or approved by Microsoft Corporation or Mojang Studios. “Microsoft,” “Mojang,” “Minecraft,” and “Minecraft: Java Edition” are trademarks or registered trademarks of their respective owners.
+
+> This project contains original code and development assets. It does not include or distribute Microsoft or Mojang source code, game files, or textures. Any references to Minecraft or Java Edition describe the project’s intended compatibility target and do not imply ownership, affiliation, or endorsement.
