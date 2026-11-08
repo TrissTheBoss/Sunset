@@ -13,13 +13,16 @@ use sunset_core::world::World;
 
 use crate::assets::FaceTextures;
 
-/// A single interleaved vertex: position, atlas UV, and face shade/color.
+/// A single interleaved vertex: position, tiled UV, face shade/color, and the
+/// texture's atlas rect (wrapped by `fract` in the fragment shader so merged
+/// rectangles tile instead of stretch).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
     pub uv: [f32; 2],
     pub color: [f32; 4],
+    pub rect: [f32; 4],
 }
 
 /// An in-progress mesh (opaque or transparent).
@@ -36,13 +39,20 @@ impl MeshData {
         }
     }
 
-    fn add_face(&mut self, corners: [[f32; 3]; 4], uvs: [[f32; 2]; 4], color: [f32; 4]) {
+    fn add_face(
+        &mut self,
+        corners: [[f32; 3]; 4],
+        uvs: [[f32; 2]; 4],
+        color: [f32; 4],
+        rect: [f32; 4],
+    ) {
         let base = self.vertices.len() as u32;
         for i in 0..4 {
             self.vertices.push(Vertex {
                 position: corners[i],
                 uv: uvs[i],
                 color,
+                rect,
             });
         }
         self.indices
@@ -260,14 +270,12 @@ fn greedy_face(
                 let corners = face_corners(Vec3::from_array(mn), Vec3::from_array(mx), face);
 
                 if let Some(rect) = rect {
+                    // Tiled UV (w x h tiles); the shader wraps it into `rect`.
                     let uvs = [0usize, 1, 2, 3].map(|i| {
                         let [u, v] = FACE_UVS[face][i];
-                        [
-                            rect[0] + u * w as f32 * (rect[2] - rect[0]),
-                            rect[1] + v * h as f32 * (rect[3] - rect[1]),
-                        ]
+                        [u * w as f32, v * h as f32]
                     });
-                    target.add_face(corners, uvs, [shade, shade, shade, 1.0]);
+                    target.add_face(corners, uvs, [shade, shade, shade, 1.0], rect);
                 } else {
                     let fc = def.face_color(FACE_NORMALS[face]);
                     let alpha = if is_transparent(state) { 0.45 } else { 1.0 };
@@ -280,6 +288,7 @@ fn greedy_face(
                             fc[2] as f32 / 255.0 * shade,
                             alpha,
                         ],
+                        [0.0, 0.0, 1.0, 1.0],
                     );
                 }
             }
@@ -370,12 +379,9 @@ pub fn build_chunk_meshes(
                                         Shape::SlabTop if face >= 2 => 0.5 * v,
                                         _ => v,
                                     };
-                                    [
-                                        rect[0] + u * (rect[2] - rect[0]),
-                                        rect[1] + v * (rect[3] - rect[1]),
-                                    ]
+                                    [u, v]
                                 });
-                                target.add_face(corners, uvs, [shade, shade, shade, 1.0]);
+                                target.add_face(corners, uvs, [shade, shade, shade, 1.0], rect);
                                 textured = true;
                             }
                         }
@@ -392,6 +398,7 @@ pub fn build_chunk_meshes(
                                 fc[2] as f32 / 255.0 * shade,
                                 alpha,
                             ],
+                            [0.0, 0.0, 1.0, 1.0],
                         );
                     }
                 }

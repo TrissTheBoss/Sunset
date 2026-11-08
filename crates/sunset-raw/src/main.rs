@@ -47,6 +47,11 @@ const VERTEX_LAYOUT: wgpu::VertexBufferLayout = wgpu::VertexBufferLayout {
             shader_location: 2,
             format: wgpu::VertexFormat::Float32x4,
         },
+        wgpu::VertexAttribute {
+            offset: 36,
+            shader_location: 3,
+            format: wgpu::VertexFormat::Float32x4,
+        },
     ],
 };
 
@@ -55,11 +60,13 @@ struct VsIn {
     @location(0) position: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) color: vec4<f32>,
+    @location(3) rect: vec4<f32>,
 };
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
+    @location(2) rect: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> view_proj: mat4x4<f32>;
 @vertex
@@ -68,13 +75,18 @@ fn vs_main(in: VsIn) -> VsOut {
     out.clip = view_proj * vec4<f32>(in.position, 1.0);
     out.uv = in.uv;
     out.color = in.color;
+    out.rect = in.rect;
     return out;
 }
 @group(0) @binding(1) var tex: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    return textureSample(tex, samp, in.uv) * in.color;
+    // Wrap the tiled UV within the texture's atlas rect so merged rectangles
+    // repeat the texture instead of stretching it.
+    let u = mix(in.rect.x, in.rect.z, fract(in.uv.x));
+    let v = mix(in.rect.y, in.rect.w, fract(in.uv.y));
+    return textureSample(tex, samp, vec2<f32>(u, v)) * in.color;
 }
 "#;
 
@@ -95,6 +107,7 @@ impl Renderer {
         queue: &wgpu::Queue,
         width: u32,
         height: u32,
+        format: wgpu::TextureFormat,
         atlas: &image::RgbaImage,
         opaque: &MeshData,
     ) -> Self {
@@ -271,14 +284,17 @@ impl Renderer {
                 entry_point: Some("fs_main"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    format,
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(wgpu::Face::Back),
+                // No backface culling: the merged quads use outward normals but
+                // the index winding is not consistently front-facing. Culling
+                // is a later optimization (directional face buckets, M8).
+                cull_mode: None,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -436,7 +452,15 @@ impl State {
             opaque.indices.len() / 3
         );
 
-        let renderer = Renderer::new(&device, &queue, config.width, config.height, &atlas, &opaque);
+        let renderer = Renderer::new(
+            &device,
+            &queue,
+            config.width,
+            config.height,
+            config.format,
+            &atlas,
+            &opaque,
+        );
 
         // Fixed M1 camera looking at the yard.
         let eye = Vec3::new(8.0, 12.0, 28.0);
