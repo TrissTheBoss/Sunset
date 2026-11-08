@@ -5069,9 +5069,16 @@ dependencies = [
 name = "sunset-raw"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
+ "glam",
+ "image",
  "pollster",
+ "serde",
+ "serde_json",
+ "sunset-core",
  "wgpu",
  "winit",
+ "zip",
 ]
 
 [[package]]
