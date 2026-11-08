@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::block::{BlockState, AIR};
+use crate::block::{is_solid, BlockState, AIR};
 use crate::chunk::{Chunk, CHUNK_HEIGHT, CHUNK_SIZE};
 
 /// The authoritative block world.
@@ -25,7 +25,9 @@ impl World {
 
     /// Borrow-mut a chunk, creating it if absent.
     pub fn ensure_chunk(&mut self, cx: i32, cz: i32) -> &mut Chunk {
-        self.chunks.entry((cx, cz)).or_insert_with(|| Chunk::new(cx, cz))
+        self.chunks
+            .entry((cx, cz))
+            .or_insert_with(|| Chunk::new(cx, cz))
     }
 
     /// Iterate over all chunks (unspecified order).
@@ -56,6 +58,12 @@ impl World {
         let (cx, cz) = chunk_coords(wx, wz);
         let (lx, lz) = local_coords(wx, wz);
         self.ensure_chunk(cx, cz).set(lx, wy as usize, lz, state);
+    }
+
+    /// Whether the block at world coordinates is solid (participates in
+    /// collision). Out-of-range Y or a missing chunk is non-solid.
+    pub fn is_solid(&self, wx: i32, wy: i32, wz: i32) -> bool {
+        is_solid(self.get_block(wx, wy, wz))
     }
 }
 

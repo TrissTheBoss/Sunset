@@ -4,8 +4,9 @@ A free Rust implementation of the Minecraft Java Edition client and integrated
 single-player game, working toward externally observable vanilla parity with
 Java Edition **26.3**.
 
-> Status: **M0 — First useful pixels** (see `PROGRESS.md`). This is an authored
-> development fixture, not a claim of vanilla parity.
+> Status: **M1 — A small Creative building loop** (see `PROGRESS.md`). This is an
+> authored development fixture and a Creative-only building loop, not a claim of
+> vanilla parity.
 
 ## Prerequisites
 
@@ -38,24 +39,30 @@ on the development machine (16 GiB RAM). Two workarounds are applied:
 A machine with more RAM (or a future rustc/windows-crate fix) should not need
 these workarounds; they are not part of the product behavior.
 
-## Controls (M0 debug camera)
+## Controls
 
 | Input | Action |
 | --- | --- |
 | Mouse look | Look around (while cursor is captured) |
-| `W` / `A` / `S` / `D` | Move forward / left / back / right |
-| `Space` / `Left Shift` | Move up / down |
-| `Left click` | Capture the cursor |
+| `W` / `A` / `S` / `D` | Walk forward / left / back / right |
+| `Space` | Jump |
+| `Left click` | Break the targeted block (or capture the cursor) |
+| `Right click` | Place the selected hotbar block |
+| `1` … `9` | Select a hotbar slot |
+| `F5` | Save the world + player state |
 | `Esc` | Release the cursor |
 
-An on-screen HUD shows the build identity and live FPS.
+An on-screen HUD shows the hotbar, a crosshair, the build identity and live FPS.
+A black outline marks the block under the crosshair. On first launch the world
+is generated from the `building-yard` fixture; saves are reloaded automatically
+on the next launch (`saves/building-yard.sunset`).
 
 ## Current limitations
 
-- Authored block materials (`sunset:*` namespace) stand in for target textures;
+- Authored block colors (`minecraft:*` ids) stand in for target textures;
   visual parity is explicitly unverified.
 - No login, launcher, networking, or asset import (intentionally deferred).
-- The camera is a free debug camera, not the playable player controller.
+- No pause menu yet (pause is a placeholder); save is manual via `F5`.
 
 See `PRD.md` for the full requirements and `PARITY_MATRIX.md` for coverage.
 Development process and the milestone commit/push rule are in

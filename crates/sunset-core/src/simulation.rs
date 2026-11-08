@@ -1,0 +1,96 @@
+//! The local authoritative simulation: applies client intents to the world and
+//! player at a fixed tick, independent of rendering (PRD 4.3, 4.5).
+
+use crate::block::AIR;
+use crate::intent::{BlockAction, PlayerIntent};
+use crate::physics::{self, Aabb};
+use crate::player::{Player, PLAYER_HALF_WIDTH, PLAYER_HEIGHT};
+use crate::world::World;
+
+/// Downward acceleration (blocks/s^2).
+pub const GRAVITY: f32 = 32.0;
+/// Horizontal walk speed (blocks/s).
+pub const WALK_SPEED: f32 = 4.317;
+/// Upward velocity applied on jump (blocks/s).
+pub const JUMP_VELOCITY: f32 = 8.4;
+
+/// The authoritative game state: a world and a player, stepped at a fixed tick.
+pub struct Simulation {
+    pub world: World,
+    pub player: Player,
+    /// Position before the last step, used for render interpolation.
+    pub prev_pos: glam::Vec3,
+}
+
+impl Simulation {
+    pub fn new(world: World, player: Player) -> Self {
+        let prev_pos = player.pos;
+        Self {
+            world,
+            player,
+            prev_pos,
+        }
+    }
+
+    /// Apply one tick of client intent over fixed timestep `dt`.
+    pub fn step(&mut self, intent: &PlayerIntent, dt: f32) {
+        self.prev_pos = self.player.pos;
+
+        // Horizontal wish direction from yaw (ignore pitch).
+        let yaw_quat = glam::Quat::from_rotation_y(self.player.yaw);
+        let forward = yaw_quat * glam::Vec3::NEG_Z;
+        let right = yaw_quat * glam::Vec3::X;
+        let wish = forward * intent.move_axis.y + right * intent.move_axis.x;
+
+        // Horizontal velocity (instant, Creative-style movement).
+        self.player.vel.x = wish.x * WALK_SPEED;
+        self.player.vel.z = wish.z * WALK_SPEED;
+
+        // Jump.
+        if intent.jump && self.player.on_ground {
+            self.player.vel.y = JUMP_VELOCITY;
+            self.player.on_ground = false;
+        }
+
+        // Gravity.
+        self.player.vel.y -= GRAVITY * dt;
+
+        // Move with collision.
+        let aabb = Aabb {
+            half: glam::Vec3::new(PLAYER_HALF_WIDTH, PLAYER_HEIGHT * 0.5, PLAYER_HALF_WIDTH),
+        };
+        self.player.on_ground = physics::move_entity(
+            &self.world,
+            &aabb,
+            &mut self.player.pos,
+            &mut self.player.vel,
+            dt,
+        );
+
+        // Hotbar selection.
+        if let Some(slot) = intent.select_slot {
+            if slot < self.player.hotbar.len() {
+                self.player.selected_slot = slot;
+            }
+        }
+
+        // Block edits.
+        if let Some(action) = intent.block_action {
+            match action {
+                BlockAction::Break(pos) => {
+                    self.world.set_block(pos[0], pos[1], pos[2], AIR);
+                }
+                BlockAction::Place(pos) => {
+                    let block = self.player.hotbar[self.player.selected_slot];
+                    if block == AIR {
+                        return;
+                    }
+                    if physics::block_intersects_player(self.player.pos, pos) {
+                        return;
+                    }
+                    self.world.set_block(pos[0], pos[1], pos[2], block);
+                }
+            }
+        }
+    }
+}

@@ -1,36 +1,38 @@
 # Progress
 
-## Completed checkpoint
+## Completed checkpoints
 
-- **M0 — First useful pixels.** A window opens, shows an authored multi-chunk
-  block world (`--dev-fixture building-yard`) centered on the origin, and a
-  movable debug camera (mouse look + WASD/Space/Shift, cursor capture release).
-  Frame timing and build identity are shown in an on-screen HUD. Resize and
-  window close work. No login, launcher, or network access is required.
+- **M0 — First useful pixels.** A window opened showing an authored multi-chunk
+  block world and a movable debug camera, with frame timing in the HUD.
 
-  - Workspace: `sunset-core` (authoritative world model, pure Rust) +
-    `sunset` (Bevy application adapter). Presentation stack: Bevy 0.20.1.
-  - Chunk meshes are derived from the same block/chunk representation gameplay
-    will use; faces are culled against air, including across chunk boundaries.
+- **M1 — A small Creative building loop.** The M0 free camera is replaced by a
+  durable player/session boundary: first-person mouse look, ground movement with
+  jump and solid-block collision, block targeting (raycast + selection outline),
+  Creative break/place, a nine-slot hotbar with the five target blocks, and
+  versioned save/reopen.
+
+  - Architecture (PRD 4.3): input → client intent → in-process session → local
+    authoritative simulation stepped at a fixed 20 Hz, with an interpolated
+    render camera. `sunset-core` owns the player, physics, simulation, and save
+    format; `sunset` is the Bevy adapter.
+  - Edits re-mesh only the changed chunk (revision tracking).
+  - Save format: versioned JSON (`saves/building-yard.sunset`), written
+    atomically; reloaded automatically on launch.
 
   **Validation** (2026-11-08, Windows 11 / AMD Ryzen 5 5600X / Radeon RX 6800 XT,
-  Vulkan): `cargo run -p sunset -- --dev-fixture building-yard` builds and opens
-  the "Sunset — M0" window; the process runs stably. Frame timing and build
-  identity are visible in the HUD. Functional smoke test passed; no vanilla
-  parity is claimed at this milestone.
-
-  **Build note:** compiling Bevy on this 16 GiB machine needs the low-memory dev
-  profile and a large-stack `rustc` (see `README.md` → "Building on this machine").
+  Vulkan): builds cleanly (`cargo build`), `cargo clippy -D warnings` and
+  `cargo fmt --check` pass, and the "Sunset — M1" window opens and runs stably.
+  No vanilla parity is claimed.
 
 ## Next playable increment
 
-- **M1 — A small Creative building loop** (PRD 3.2/3.3): ground movement with
-  collision, block targeting/breaking/placement, a nine-slot hotbar, and
-  persistent save/reopen. Replaces the M0 free camera with a durable
-  player/session boundary.
+- **M2 — Representative building world + target resources** (PRD 3.4): verified
+  target block-state/resource definitions, a larger representative world, and
+  more of the Creative set (more block states, hotbar polish).
 
 ## Blockers
 
-- None for M0. Target artifacts (exact Java Edition 26.3 client/server) are not
+- None for M1. Target artifacts (exact Java Edition 26.3 client/server) are not
   yet captured; all target-specific fields remain `unverified` in
   `compat/targets/26.3/manifest.json`.
+

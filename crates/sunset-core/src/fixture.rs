@@ -10,11 +10,11 @@ use crate::world::World;
 pub fn building_yard() -> World {
     let mut world = World::new();
 
-    let grass = state_by_id("sunset:grass_block").expect("registered block");
-    let dirt = state_by_id("sunset:dirt").expect("registered block");
-    let stone = state_by_id("sunset:stone").expect("registered block");
-    let cobble = state_by_id("sunset:cobblestone").expect("registered block");
-    let planks = state_by_id("sunset:oak_planks").expect("registered block");
+    let grass = state_by_id("minecraft:grass_block").expect("registered block");
+    let dirt = state_by_id("minecraft:dirt").expect("registered block");
+    let stone = state_by_id("minecraft:stone").expect("registered block");
+    let cobble = state_by_id("minecraft:cobblestone").expect("registered block");
+    let planks = state_by_id("minecraft:oak_planks").expect("registered block");
     let sand = state_by_id("sunset:sand").expect("registered block");
 
     // Flat ground spanning several chunks on both sides of the origin.
