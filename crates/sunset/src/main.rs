@@ -13,6 +13,9 @@ use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::render::renderer::RenderAdapterInfo;
+use bevy::render::settings::{PowerPreference, RenderCreation, WgpuSettings};
+use bevy::render::RenderPlugin;
 use bevy::window::{Monitor, PresentMode, PrimaryMonitor, PrimaryWindow, WindowMode};
 
 use sunset_core::fixture;
@@ -35,15 +38,25 @@ pub struct Intent(pub PlayerIntent);
 fn main() {
     App::new()
         .add_plugins((
-            DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Sunset — M1".into(),
-                    // Unlimited frame rate (disable VSync) for max-FPS testing.
-                    present_mode: PresentMode::AutoNoVsync,
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Sunset — M1".into(),
+                        // Unlimited frame rate (disable VSync) for max-FPS testing.
+                        present_mode: PresentMode::AutoNoVsync,
+                        ..default()
+                    }),
+                    ..default()
+                })
+                // Prefer the discrete (high-performance) GPU over integrated or
+                // software adapters.
+                .set(RenderPlugin {
+                    render_creation: RenderCreation::from(WgpuSettings {
+                        power_preference: PowerPreference::HighPerformance,
+                        ..default()
+                    }),
                     ..default()
                 }),
-                ..default()
-            }),
             FrameTimeDiagnosticsPlugin::default(),
         ))
         .insert_resource(Time::<Fixed>::from_hz(20.0))
@@ -51,7 +64,7 @@ fn main() {
         .insert_resource(Intent::default())
         .insert_resource(renderer::Target::default())
         .add_systems(PreStartup, (setup_session, setup_assets))
-        .add_systems(PostStartup, log_monitor_refresh)
+        .add_systems(PostStartup, (log_monitor_refresh, log_adapter))
         .add_systems(
             Startup,
             (
@@ -175,6 +188,31 @@ fn log_monitor_refresh(monitors: Query<&Monitor, With<PrimaryMonitor>>) {
             None => info!("Primary monitor refresh rate: unknown"),
         },
         Err(_) => warn!("Could not read the primary monitor's refresh rate"),
+    }
+}
+
+/// Log which GPU the renderer selected, and warn if it is not the discrete GPU
+/// (a common cause of unexpectedly low frame rates on multi-GPU systems).
+fn log_adapter(adapter: Option<Res<RenderAdapterInfo>>) {
+    let Some(adapter) = adapter else {
+        warn!("Render adapter info not yet available");
+        return;
+    };
+    let device_type = format!("{:?}", adapter.device_type);
+    info!(
+        "Render adapter: '{}' — {}, backend {:?}",
+        adapter.name, device_type, adapter.backend
+    );
+    match device_type.as_str() {
+        "Cpu" => error!(
+            "Rendering on the CPU (software) — the GPU is not being used at all; this will be very slow."
+        ),
+        "IntegratedGpu" => warn!(
+            "Rendering on an integrated GPU — the discrete GPU is not being used. \
+             Force it with the WGPU_ADAPTER_NAME env var or Windows graphics settings."
+        ),
+        "DiscreteGpu" => info!("Rendering on a discrete GPU."),
+        _ => {}
     }
 }
 
