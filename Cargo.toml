@@ -1,14 +1,13 @@
 [workspace]
-resolver = "3"
-members = ["crates/sunset-foundation"]
+resolver = "2"
+members = ["crates/sunset-core", "crates/sunset"]
 
 [workspace.package]
-edition = "2024"
-license = "MIT"
-rust-version = "1.85"
+version = "0.1.0"
+edition = "2021"
 
-[workspace.lints.rust]
-unsafe_code = "forbid"
-
-[workspace.lints.clippy]
-all = "warn"
+# Keep dev builds light on memory: no debug info, no optimization. This makes
+# large dependencies (Bevy) compilable on modest-RAM machines.
+[profile.dev]
+debug = false
+opt-level = 0

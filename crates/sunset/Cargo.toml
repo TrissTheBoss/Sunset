@@ -1,0 +1,8 @@
+[package]
+name = "sunset"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sunset-core = { path = "../sunset-core" }
+bevy = "0.20.1"
