@@ -57,11 +57,20 @@ A black outline marks the block under the crosshair. On first launch the world
 is generated from the `building-yard` fixture; saves are reloaded automatically
 on the next launch (`saves/building-yard.sunset`).
 
+## Local Minecraft assets
+
+Sunset loads block textures from a local, user-provided Minecraft installation
+(the client jar under `.minecraft`), so supported blocks render with the real
+`minecraft:*` textures. It auto-detects `%APPDATA%\.minecraft`, or you can point
+it elsewhere with the `SUNSET_MINECRAFT_DIR` environment variable. If no
+installation is found, it falls back to authored flat colors. Textures are
+loaded for reading only; nothing is bundled, redistributed, or written back.
+
 ## Current limitations
 
-- Authored block colors (`minecraft:*` ids) stand in for target textures;
-  visual parity is explicitly unverified.
-- No login, launcher, networking, or asset import (intentionally deferred).
+- Block textures are loaded, but full models/shaders/post-effects are not yet;
+  visual parity remains unverified.
+- No login, launcher, or networking (intentionally deferred).
 - No pause menu yet (pause is a placeholder); save is manual via `F5`.
 
 See `PRD.md` for the full requirements and `PARITY_MATRIX.md` for coverage.

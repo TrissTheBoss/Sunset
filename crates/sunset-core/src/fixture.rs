@@ -15,7 +15,7 @@ pub fn building_yard() -> World {
     let stone = state_by_id("minecraft:stone").expect("registered block");
     let cobble = state_by_id("minecraft:cobblestone").expect("registered block");
     let planks = state_by_id("minecraft:oak_planks").expect("registered block");
-    let sand = state_by_id("sunset:sand").expect("registered block");
+    let sand = state_by_id("minecraft:sand").expect("registered block");
     // M2 blocks: non-full-cube, transparent, orientable.
     let slab_bottom =
         state_by_id("minecraft:smooth_stone_slab[type=bottom]").expect("registered block");

@@ -2,13 +2,16 @@
 //! over the authoritative `sunset-core` simulation (PRD 4.1).
 
 mod hud;
+mod mcassets;
 mod player;
 mod renderer;
 
 use std::path::Path;
 
+use bevy::asset::RenderAssetUsages;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use sunset_core::fixture;
 use sunset_core::intent::PlayerIntent;
@@ -42,7 +45,7 @@ fn main() {
         .insert_resource(Time::<Fixed>::from_hz(20.0))
         .insert_resource(Intent::default())
         .insert_resource(renderer::Target::default())
-        .add_systems(PreStartup, setup_session)
+        .add_systems(PreStartup, (setup_session, setup_assets))
         .add_systems(
             Startup,
             (
@@ -70,6 +73,39 @@ fn main() {
 fn setup_session(mut commands: Commands) {
     let (world, player) = load_or_generate();
     commands.insert_resource(Session(Simulation::new(world, player)));
+}
+
+/// Load Minecraft block textures from a local install into a texture atlas,
+/// if available. Falls back to authored flat colors otherwise.
+fn setup_assets(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    let Some(dir) = mcassets::find_minecraft_dir() else {
+        warn!("No .minecraft directory found; using authored colors");
+        return;
+    };
+    match mcassets::load_assets(&dir) {
+        Ok(loaded) => {
+            let (w, h) = (loaded.atlas.width(), loaded.atlas.height());
+            let image = Image::new(
+                Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                TextureDimension::D2,
+                loaded.atlas.into_raw(),
+                TextureFormat::Rgba8UnormSrgb,
+                RenderAssetUsages::RENDER_WORLD,
+            );
+            let handle = images.add(image);
+            commands.insert_resource(renderer::BlockAtlas {
+                face_textures: loaded.face_textures,
+                uv: loaded.uv,
+                handle,
+            });
+            info!("Loaded Minecraft block textures from {}", dir.display());
+        }
+        Err(e) => warn!("Could not load Minecraft assets ({e}); using authored colors"),
+    }
 }
 
 fn load_or_generate() -> (GameWorld, Player) {

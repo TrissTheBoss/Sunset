@@ -41,7 +41,11 @@ implemented and validated; they are not a claim of vanilla parity unless stated.
 - Changed the save format to store namespaced block ids instead of array indices
   (schema v2), with deterministic (sorted) chunk output.
 - Added a renderer-free deterministic replay test and save round-trip test.
-- The four architectural probes (target resources/shaders, native save data,
-  protocol/authority, worldgen/numeric) remain blocked pending target artifacts.
+- Added local asset loading: supported blocks now render with the real
+  `minecraft:*` textures read from a local Minecraft installation's client jar
+  (auto-detected, or via `SUNSET_MINECRAFT_DIR`), with a flat-color fallback.
+- The remaining architectural probes (native save data, protocol/authority,
+  worldgen/numeric) and the shader/post-effect path remain blocked pending
+  target artifacts.
 
 

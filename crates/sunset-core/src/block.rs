@@ -109,7 +109,7 @@ pub const BLOCKS: &[BlockDef] = &[
         end_color: [0, 0, 0],
     },
     BlockDef {
-        id: "sunset:sand",
+        id: "minecraft:sand",
         color: [219, 207, 163],
         shape: Shape::FullCube,
         opacity: Opacity::Opaque,

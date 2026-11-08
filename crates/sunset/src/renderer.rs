@@ -1,14 +1,17 @@
 //! Chunk meshing and block targeting. Geometry is derived from the same
 //! block/chunk representation that gameplay uses (PRD 3.1, 4.6).
 
+use std::collections::HashMap;
+
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 
-use sunset_core::block::{block_def, is_transparent, occludes, AIR};
+use sunset_core::block::{block_def, is_transparent, occludes, BlockState, AIR};
 use sunset_core::chunk::{Chunk, CHUNK_HEIGHT, CHUNK_SIZE};
 use sunset_core::world::World as GameWorld;
 
+use crate::mcassets::FaceTextures;
 use crate::Session;
 
 /// The block currently under the crosshair (and the face that was hit).
@@ -19,6 +22,16 @@ pub struct Target(pub Option<TargetHit>);
 pub struct TargetHit {
     pub pos: [i32; 3],
     pub face: [i32; 3],
+}
+
+/// The target texture atlas: per-block face textures, a texture-name → UV-rect
+/// map, and the atlas image handle. `None` means assets were not available, so
+/// the renderer falls back to flat authored colors.
+#[derive(Resource)]
+pub struct BlockAtlas {
+    pub face_textures: HashMap<BlockState, FaceTextures>,
+    pub uv: HashMap<String, [f32; 4]>,
+    pub handle: Handle<Image>,
 }
 
 /// Marker for a spawned chunk mesh, carrying identity, revision, and which pass
@@ -80,6 +93,7 @@ struct MeshData {
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
     colors: Vec<[f32; 4]>,
+    uvs: Vec<[f32; 2]>,
     indices: Vec<u32>,
 }
 
@@ -89,16 +103,24 @@ impl MeshData {
             positions: Vec::new(),
             normals: Vec::new(),
             colors: Vec::new(),
+            uvs: Vec::new(),
             indices: Vec::new(),
         }
     }
 
-    fn add_face(&mut self, corners: [[f32; 3]; 4], normal: [f32; 3], color: [f32; 4]) {
+    fn add_face(
+        &mut self,
+        corners: [[f32; 3]; 4],
+        uvs: [[f32; 2]; 4],
+        normal: [f32; 3],
+        color: [f32; 4],
+    ) {
         let base = self.positions.len() as u32;
-        for c in corners {
-            self.positions.push(c);
+        for i in 0..4 {
+            self.positions.push(corners[i]);
             self.normals.push(normal);
             self.colors.push(color);
+            self.uvs.push(uvs[i]);
         }
         self.indices
             .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -116,6 +138,7 @@ impl MeshData {
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals);
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.colors);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs);
         mesh.insert_indices(Indices::U32(self.indices));
         mesh
     }
@@ -134,21 +157,42 @@ const FACE_NORMALS: [[i32; 3]; 6] = [
 /// Authored fixed per-face brightness (Minecraft-like face shading).
 const FACE_SHADE: [f32; 6] = [1.0, 0.5, 0.6, 0.6, 0.8, 0.8];
 
+/// Texture-space UVs per face corner (0..1), indexed like `face_corners`, so
+/// textures render upright.
+const FACE_UVS: [[[f32; 2]; 4]; 6] = [
+    // +Y (top)
+    [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+    // -Y (bottom)
+    [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+    // +X (east)
+    [[0.0, 1.0], [0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+    // -X (west)
+    [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+    // +Z (south)
+    [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+    // -Z (north)
+    [[0.0, 1.0], [0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+];
+
 pub fn spawn_chunk_meshes(
     mut commands: Commands,
     session: Res<Session>,
+    atlas: Option<Res<BlockAtlas>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let texture: Option<Handle<Image>> = atlas.as_ref().map(|a| a.handle.clone());
     // Two shared unlit materials: opaque and transparent (alpha-blended).
     let opaque_mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
+        base_color_texture: texture.clone(),
         unlit: true,
         cull_mode: None,
         ..default()
     });
     let transparent_mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
+        base_color_texture: texture,
         unlit: true,
         cull_mode: None,
         alpha_mode: AlphaMode::Blend,
@@ -157,7 +201,7 @@ pub fn spawn_chunk_meshes(
 
     let world = &session.0.world;
     for chunk in world.chunks() {
-        let (opaque, transparent) = build_chunk_meshes(world, chunk);
+        let (opaque, transparent) = build_chunk_meshes(world, chunk, atlas.as_deref());
         let ox = (chunk.cx * CHUNK_SIZE as i32) as f32;
         let oz = (chunk.cz * CHUNK_SIZE as i32) as f32;
         let tf = Transform::from_xyz(ox, 0.0, oz);
@@ -192,6 +236,7 @@ pub fn spawn_chunk_meshes(
 /// built (block edits).
 pub fn remesh_system(
     session: Res<Session>,
+    atlas: Option<Res<BlockAtlas>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut query: Query<(&mut ChunkMesh, &mut Mesh3d)>,
 ) {
@@ -199,7 +244,7 @@ pub fn remesh_system(
     for (mut cm, mut mesh3d) in &mut query {
         if let Some(chunk) = world.get_chunk(cm.cx, cm.cz) {
             if chunk.revision != cm.revision {
-                let (opaque, transparent) = build_chunk_meshes(world, chunk);
+                let (opaque, transparent) = build_chunk_meshes(world, chunk, atlas.as_deref());
                 let data = if cm.transparent { transparent } else { opaque };
                 *mesh3d = Mesh3d(meshes.add(data.build()));
                 cm.revision = chunk.revision;
@@ -248,8 +293,14 @@ fn draw_box(gizmos: &mut Gizmos, min: Vec3, max: Vec3, color: Color) {
 }
 
 /// Build the opaque and transparent meshes for one chunk, emitting only faces
-/// that border a non-occluding block (including across chunk boundaries).
-fn build_chunk_meshes(world: &GameWorld, chunk: &Chunk) -> (MeshData, MeshData) {
+/// that border a non-occluding block (including across chunk boundaries). When
+/// a target texture atlas is available, faces are textured; otherwise they fall
+/// back to the authored flat color.
+fn build_chunk_meshes(
+    world: &GameWorld,
+    chunk: &Chunk,
+    atlas: Option<&BlockAtlas>,
+) -> (MeshData, MeshData) {
     let mut opaque = MeshData::new();
     let mut transparent = MeshData::new();
 
@@ -267,7 +318,6 @@ fn build_chunk_meshes(world: &GameWorld, chunk: &Chunk) -> (MeshData, MeshData) 
                 let Some((bmin, bmax)) = def.collision_box() else {
                     continue;
                 };
-                let alpha = if is_transparent(state) { 0.45 } else { 1.0 };
                 let wx = base_x + x as i32;
                 let wz = base_z + z as i32;
                 let wy = y as i32;
@@ -282,20 +332,46 @@ fn build_chunk_meshes(world: &GameWorld, chunk: &Chunk) -> (MeshData, MeshData) 
                     if occludes(world.get_block(wx + nx, wy + ny, wz + nz)) {
                         continue;
                     }
-                    let fc = def.face_color([nx, ny, nz]);
                     let shade = FACE_SHADE[face];
-                    let color: [f32; 4] = [
-                        fc[0] as f32 / 255.0 * shade,
-                        fc[1] as f32 / 255.0 * shade,
-                        fc[2] as f32 / 255.0 * shade,
-                        alpha,
-                    ];
                     let corners = face_corners(
                         Vec3::new(x as f32 + bmin.x, y as f32 + bmin.y, z as f32 + bmin.z),
                         Vec3::new(x as f32 + bmax.x, y as f32 + bmax.y, z as f32 + bmax.z),
                         face,
                     );
-                    target.add_face(corners, [nx as f32, ny as f32, nz as f32], color);
+                    let normal = [nx as f32, ny as f32, nz as f32];
+
+                    // Prefer the target texture when available.
+                    let mut textured = false;
+                    if let Some(atlas) = atlas {
+                        if let Some(ft) = atlas.face_textures.get(&state) {
+                            if let Some(tex) = ft.texture_for_face([nx, ny, nz], def.end_axis) {
+                                if let Some(&rect) = atlas.uv.get(tex) {
+                                    let uvs = FACE_UVS[face].map(|[u, v]| {
+                                        [
+                                            rect[0] + u * (rect[2] - rect[0]),
+                                            rect[1] + v * (rect[3] - rect[1]),
+                                        ]
+                                    });
+                                    let color = [shade, shade, shade, 1.0];
+                                    target.add_face(corners, uvs, normal, color);
+                                    textured = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if !textured {
+                        // Fallback: authored flat color.
+                        let fc = def.face_color([nx, ny, nz]);
+                        let alpha = if is_transparent(state) { 0.45 } else { 1.0 };
+                        let color: [f32; 4] = [
+                            fc[0] as f32 / 255.0 * shade,
+                            fc[1] as f32 / 255.0 * shade,
+                            fc[2] as f32 / 255.0 * shade,
+                            alpha,
+                        ];
+                        target.add_face(corners, [[0.0, 0.0]; 4], normal, color);
+                    }
                 }
             }
         }

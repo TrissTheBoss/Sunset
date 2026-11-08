@@ -45,14 +45,16 @@ vanilla-target comparison is claimed.
 | M2-3 | Orientable oak log (axis x/y/z end faces) | implemented_unverified | `block::end_axis` + `face_color` |
 | M2-4 | Durable save identity (namespaced ids, schema v2) | implemented_unverified | `save.rs` |
 | M2-5 | Renderer-free deterministic replay | implemented_unverified | `simulation::tests` (replay + round-trip) |
-| M2-6 | Target resources/shaders probe | blocked | needs Java Edition 26.3 artifacts |
+| M2-6 | Target resources/shaders probe | partially done | block textures loaded from a local install (`mcassets.rs`); post-effect/shader path still blocked |
 | M2-7 | Native save data probe | blocked | needs a copied target region |
 | M2-8 | Protocol/authority probe | blocked | needs an unmodified target server |
 | M2-9 | Worldgen/numeric behavior probe | blocked | needs a target-derived generator fixture |
 
-M2's foundation cases are functionally implemented and tested; the four
-architectural probes are `blocked` pending capture of the exact Java Edition
-26.3 artifacts.
+M2's foundation cases are functionally implemented and tested. The
+target-resources probe is partially complete: block textures are loaded from a
+local Minecraft install. The remaining probes (native save data,
+protocol/authority, worldgen/numeric) and the shader/post-effect path are
+`blocked` pending capture of the exact Java Edition 26.3 artifacts.
 
 ## Feature families (baseline inventory from PRD 8)
 

@@ -38,10 +38,14 @@
     indices (schema v2).
   - **Renderer-free replay** — a headless deterministic replay test of the
     interaction sequence (`simulation::tests`), plus save round-trip.
+  - **Local asset loading** — supported blocks render with real `minecraft:*`
+    textures read from a local Minecraft install's client jar (auto-detected or
+    via `SUNSET_MINECRAFT_DIR`), with a flat-color fallback.
 
-  **Architectural probes** (PRD 5.1) are recorded as `blocked` pending capture of
-  the exact Java Edition 26.3 artifacts: target resources/shaders, native save
-  data, protocol/authority, and worldgen/numeric behavior.
+  **Architectural probes** (PRD 5.1): the target-resources probe is partially
+  done (textures loaded); native save data, protocol/authority, worldgen/numeric,
+  and the shader/post-effect path remain `blocked` pending capture of the exact
+  Java Edition 26.3 artifacts.
 
 ## Next playable increment
 
