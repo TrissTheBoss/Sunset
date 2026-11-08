@@ -121,10 +121,8 @@ fn find_jar(minecraft_dir: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Read a whole entry from the jar.
-fn read_jar(jar_path: &Path, entry: &str) -> Result<Vec<u8>, String> {
-    let file = File::open(jar_path).map_err(|e| e.to_string())?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+/// Read a whole entry from an already-open jar.
+fn read_jar_entry(archive: &mut zip::ZipArchive<File>, entry: &str) -> Result<Vec<u8>, String> {
     let mut f = archive
         .by_name(entry)
         .map_err(|e| format!("{entry}: {e}"))?;
@@ -150,6 +148,8 @@ fn texture_entry(name: &str) -> String {
 /// user's local Minecraft installation.
 pub fn load_assets(minecraft_dir: &Path) -> Result<LoadedAssets, String> {
     let jar = find_jar(minecraft_dir).ok_or("no client jar found in versions/")?;
+    let file = File::open(&jar).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
 
     let mut face_textures: HashMap<BlockState, FaceTextures> = HashMap::new();
     let mut texture_bytes: HashMap<String, Vec<u8>> = HashMap::new();
@@ -163,7 +163,7 @@ pub fn load_assets(minecraft_dir: &Path) -> Result<LoadedAssets, String> {
         };
 
         let state_entry = format!("assets/minecraft/blockstates/{block}.json");
-        let state_bytes = read_jar(&jar, &state_entry)?;
+        let state_bytes = read_jar_entry(&mut archive, &state_entry)?;
         let state_json: serde_json::Value =
             serde_json::from_slice(&state_bytes).map_err(|e| format!("{state_entry}: {e}"))?;
         let variant_value = &state_json["variants"][variant];
@@ -177,7 +177,7 @@ pub fn load_assets(minecraft_dir: &Path) -> Result<LoadedAssets, String> {
 
         let model_path = model_ref.strip_prefix("minecraft:").unwrap_or(&model_ref);
         let model_entry = format!("assets/minecraft/models/{model_path}.json");
-        let model_bytes = read_jar(&jar, &model_entry)?;
+        let model_bytes = read_jar_entry(&mut archive, &model_entry)?;
         let model: serde_json::Value =
             serde_json::from_slice(&model_bytes).map_err(|e| format!("{model_entry}: {e}"))?;
 
@@ -206,7 +206,7 @@ pub fn load_assets(minecraft_dir: &Path) -> Result<LoadedAssets, String> {
                 if let std::collections::hash_map::Entry::Vacant(e) =
                     texture_bytes.entry(name.clone())
                 {
-                    if let Ok(bytes) = read_jar(&jar, &texture_entry(&name)) {
+                    if let Ok(bytes) = read_jar_entry(&mut archive, &texture_entry(&name)) {
                         e.insert(bytes);
                     }
                 }

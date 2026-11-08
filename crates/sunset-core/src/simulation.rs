@@ -154,4 +154,21 @@ mod tests {
         let (world, player) = save::from_json(&json).expect("load save");
         assert_eq!(save::to_json(&world, &player), json);
     }
+
+    #[test]
+    fn player_settles_on_ground() {
+        let world = fixture::building_yard();
+        let player = Player::new(glam::Vec3::new(8.0, 5.5, 16.0), 0.5, -0.25);
+        let mut sim = Simulation::new(world, player);
+        for _ in 0..(20 * 3) {
+            sim.step(&PlayerIntent::default(), DT);
+        }
+        let p = sim.player.pos;
+        assert!(
+            (p.x - 8.0).abs() < 0.1 && (p.z - 16.0).abs() < 0.1,
+            "player drifted horizontally: {p:?}"
+        );
+        // `pos` is the collision-box center (feet at y=5.0, center at ~5.9).
+        assert!((p.y - 5.9).abs() < 0.5, "player not on ground: {p:?}");
+    }
 }

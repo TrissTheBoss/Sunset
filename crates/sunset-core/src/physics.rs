@@ -48,28 +48,38 @@ impl Aabb {
 
 /// Move `pos` by `vel * dt`, resolving collisions one axis at a time. Returns
 /// `true` if the entity ended the move standing on the ground.
+///
+/// Each axis is only resolved when the entity actually moved along it; resolving
+/// an axis with zero velocity would mis-resolve a pre-existing overlap from a
+/// different axis (e.g. the entity starts embedded in a block).
 pub fn move_entity(world: &World, aabb: &Aabb, pos: &mut Vec3, vel: &mut Vec3, dt: f32) -> bool {
     let mut on_ground = false;
 
-    pos.x += vel.x * dt;
-    if aabb.collides(world, *pos) {
-        pos.x = resolve(world, aabb, *pos, 0, vel.x);
-        vel.x = 0.0;
-    }
-
-    pos.y += vel.y * dt;
-    if aabb.collides(world, *pos) {
-        pos.y = resolve(world, aabb, *pos, 1, vel.y);
-        if vel.y < 0.0 {
-            on_ground = true;
+    if vel.x != 0.0 {
+        pos.x += vel.x * dt;
+        if aabb.collides(world, *pos) {
+            pos.x = resolve(world, aabb, *pos, 0, vel.x);
+            vel.x = 0.0;
         }
-        vel.y = 0.0;
     }
 
-    pos.z += vel.z * dt;
-    if aabb.collides(world, *pos) {
-        pos.z = resolve(world, aabb, *pos, 2, vel.z);
-        vel.z = 0.0;
+    if vel.y != 0.0 {
+        pos.y += vel.y * dt;
+        if aabb.collides(world, *pos) {
+            pos.y = resolve(world, aabb, *pos, 1, vel.y);
+            if vel.y < 0.0 {
+                on_ground = true;
+            }
+            vel.y = 0.0;
+        }
+    }
+
+    if vel.z != 0.0 {
+        pos.z += vel.z * dt;
+        if aabb.collides(world, *pos) {
+            pos.z = resolve(world, aabb, *pos, 2, vel.z);
+            vel.z = 0.0;
+        }
     }
 
     on_ground

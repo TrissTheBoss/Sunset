@@ -17,6 +17,8 @@ pub const AIR: BlockState = 0;
 /// A block's collision/geometry shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shape {
+    /// No collision and no model (air).
+    None,
     /// A full 1x1x1 cube.
     FullCube,
     /// A half-height slab occupying the bottom half.
@@ -63,7 +65,7 @@ pub const BLOCKS: &[BlockDef] = &[
     BlockDef {
         id: "minecraft:air",
         color: [0, 0, 0],
-        shape: Shape::FullCube,
+        shape: Shape::None,
         opacity: Opacity::Transparent,
         end_axis: None,
         end_color: [0, 0, 0],
@@ -172,6 +174,7 @@ impl BlockDef {
     /// the block has any collision.
     pub fn collision_box(&self) -> Option<(Vec3, Vec3)> {
         match self.shape {
+            Shape::None => None,
             Shape::FullCube => Some((Vec3::ZERO, Vec3::ONE)),
             Shape::SlabBottom => Some((Vec3::ZERO, Vec3::new(1.0, 0.5, 1.0))),
             Shape::SlabTop => Some((Vec3::new(0.0, 0.5, 0.0), Vec3::ONE)),

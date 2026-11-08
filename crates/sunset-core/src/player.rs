@@ -41,9 +41,10 @@ impl Player {
         }
     }
 
-    /// Eye (camera) position in world space.
+    /// Eye (camera) position in world space. `pos` is the center of the
+    /// collision box, so the eye sits at `eye_height` above the feet.
     pub fn eye_pos(&self) -> Vec3 {
-        self.pos + Vec3::new(0.0, PLAYER_EYE_HEIGHT, 0.0)
+        self.pos + Vec3::new(0.0, PLAYER_EYE_HEIGHT - PLAYER_HEIGHT * 0.5, 0.0)
     }
 }
 
