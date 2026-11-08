@@ -1,0 +1,9 @@
+[package]
+name = "sunset-raw"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wgpu = "30.0.1"
+winit = "0.30.13"
+pollster = "0.3"
