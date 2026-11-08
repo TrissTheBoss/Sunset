@@ -13,6 +13,7 @@ use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::window::PresentMode;
 
 use sunset_core::fixture;
 use sunset_core::intent::PlayerIntent;
@@ -37,6 +38,8 @@ fn main() {
             DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "Sunset — M1".into(),
+                    // Unlimited frame rate (disable VSync) for max-FPS testing.
+                    present_mode: PresentMode::AutoNoVsync,
                     ..default()
                 }),
                 ..default()
@@ -44,6 +47,7 @@ fn main() {
             FrameTimeDiagnosticsPlugin::default(),
         ))
         .insert_resource(Time::<Fixed>::from_hz(20.0))
+        .init_resource::<hud::FrameStats>()
         .insert_resource(Intent::default())
         .insert_resource(renderer::Target::default())
         .add_systems(PreStartup, (setup_session, setup_assets))

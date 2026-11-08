@@ -1,5 +1,7 @@
 //! In-game HUD: hotbar, crosshair, and frame timing / build identity.
 
+use std::collections::VecDeque;
+
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::text::FontSize;
@@ -7,6 +9,66 @@ use bevy::text::FontSize;
 use sunset_core::block::{block_def, BlockState, AIR};
 
 use crate::Session;
+
+/// Number of recent frame durations kept for average / 0.1%-low FPS.
+const FRAME_WINDOW: usize = 1000;
+
+/// Rolling window of frame durations used to report average and 0.1%-low FPS.
+#[derive(Resource)]
+pub struct FrameStats {
+    /// Recent frame durations in seconds, oldest first.
+    times: VecDeque<f32>,
+}
+
+impl Default for FrameStats {
+    fn default() -> Self {
+        Self {
+            times: VecDeque::with_capacity(FRAME_WINDOW),
+        }
+    }
+}
+
+impl FrameStats {
+    fn record(&mut self, dt: f32) {
+        if dt > 0.0 && dt.is_finite() {
+            self.times.push_back(dt);
+            if self.times.len() > FRAME_WINDOW {
+                self.times.pop_front();
+            }
+        }
+    }
+
+    /// Average FPS over the window (frames divided by total time).
+    fn average_fps(&self) -> Option<f32> {
+        let n = self.times.len();
+        if n == 0 {
+            return None;
+        }
+        let total: f32 = self.times.iter().sum();
+        if total <= 0.0 {
+            return None;
+        }
+        Some(n as f32 / total)
+    }
+
+    /// 0.1%-low FPS: `1 / (99.9th-percentile frame time)`.
+    fn low_01_fps(&self) -> Option<f32> {
+        let n = self.times.len();
+        if n == 0 {
+            return None;
+        }
+        let mut sorted: Vec<f32> = self.times.iter().copied().collect();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let idx = ((n as f32 * 0.999).ceil() as usize)
+            .saturating_sub(1)
+            .min(n - 1);
+        let dt = sorted[idx];
+        if dt <= 0.0 {
+            return None;
+        }
+        Some(1.0 / dt)
+    }
+}
 
 /// Marker for the HUD text span updated each frame.
 #[derive(Component)]
@@ -92,22 +154,36 @@ pub fn spawn_hud(mut commands: Commands, session: Res<Session>) {
 }
 
 pub fn update_hud(
+    time: Res<Time>,
+    mut stats: ResMut<FrameStats>,
     diagnostics: Res<DiagnosticsStore>,
     session: Res<Session>,
     mut text_query: Query<&mut TextSpan, With<HudText>>,
     mut slot_query: Query<(&HotbarSlot, &mut BorderColor)>,
 ) {
+    stats.record(time.delta_secs());
+
     let fps = diagnostics
         .get(&FrameTimeDiagnosticsPlugin::FPS)
         .and_then(|d| d.smoothed())
         .map(|v| format!("{v:.1}"))
         .unwrap_or_else(|| "n/a".into());
+    let avg = stats
+        .average_fps()
+        .map(|v| format!("{v:.1}"))
+        .unwrap_or_else(|| "n/a".into());
+    let low = stats
+        .low_01_fps()
+        .map(|v| format!("{v:.1}"))
+        .unwrap_or_else(|| "n/a".into());
 
     for mut span in &mut text_query {
         **span = format!(
-            "sunset v{} (M1)\nFPS: {}\nEsc: release cursor  |  F5: save",
+            "sunset v{} (M1)\nFPS: {} | avg: {} | 0.1% low: {}\nEsc: release cursor  |  F5: save",
             env!("CARGO_PKG_VERSION"),
-            fps
+            fps,
+            avg,
+            low
         );
     }
 
@@ -130,5 +206,32 @@ fn slot_color(state: BlockState) -> Color {
             d.color[1] as f32 / 255.0,
             d.color[2] as f32 / 255.0,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_stats_average_and_low() {
+        let mut s = FrameStats::default();
+        // 100 frames at a steady 10ms each (100 FPS).
+        for _ in 0..100 {
+            s.record(0.010);
+        }
+        assert!((s.average_fps().unwrap() - 100.0).abs() < 0.001);
+        assert!((s.low_01_fps().unwrap() - 100.0).abs() < 0.001);
+
+        // A single slower frame (50 FPS) should barely dent the average but
+        // shows up as the 0.1% low.
+        s.record(0.020);
+        let avg = s.average_fps().unwrap();
+        assert!((avg - 99.0).abs() < 1.0, "avg = {avg}");
+        assert!(
+            (s.low_01_fps().unwrap() - 50.0).abs() < 0.001,
+            "low = {}",
+            s.low_01_fps().unwrap()
+        );
     }
 }
