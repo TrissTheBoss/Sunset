@@ -13,7 +13,7 @@ use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::window::PresentMode;
+use bevy::window::{Monitor, PresentMode, PrimaryMonitor, PrimaryWindow, WindowMode};
 
 use sunset_core::fixture;
 use sunset_core::intent::PlayerIntent;
@@ -51,6 +51,7 @@ fn main() {
         .insert_resource(Intent::default())
         .insert_resource(renderer::Target::default())
         .add_systems(PreStartup, (setup_session, setup_assets))
+        .add_systems(PostStartup, log_monitor_refresh)
         .add_systems(
             Startup,
             (
@@ -69,6 +70,7 @@ fn main() {
                 renderer::remesh_system,
                 hud::update_hud,
                 save_system,
+                toggle_fullscreen,
             ),
         )
         .run();
@@ -160,6 +162,38 @@ fn save_system(keys: Res<ButtonInput<KeyCode>>, session: Res<Session>) {
         match sunset_core::save::write_atomic(Path::new(SAVE_PATH), &json) {
             Ok(()) => info!("Saved to {}", SAVE_PATH),
             Err(e) => error!("Save failed: {}", e),
+        }
+    }
+}
+
+/// Log the primary monitor's refresh rate once at startup, to help diagnose an
+/// unexpected frame-rate ceiling (e.g. 90 FPS == a 90 Hz display under VSync).
+fn log_monitor_refresh(monitors: Query<&Monitor, With<PrimaryMonitor>>) {
+    match monitors.single() {
+        Ok(m) => match m.refresh_rate_millihertz {
+            Some(r) => info!("Primary monitor refresh rate: {:.2} Hz", r as f32 / 1000.0),
+            None => info!("Primary monitor refresh rate: unknown"),
+        },
+        Err(_) => warn!("Could not read the primary monitor's refresh rate"),
+    }
+}
+
+/// Toggle between windowed and exclusive fullscreen on `F11`. Exclusive
+/// fullscreen bypasses the desktop compositor, which on some Windows setups is
+/// what still caps the frame rate to the display refresh rate even with VSync
+/// disabled.
+fn toggle_fullscreen(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+) {
+    if keys.just_pressed(KeyCode::F11) {
+        for mut window in &mut windows {
+            window.mode = match window.mode {
+                WindowMode::Windowed => {
+                    WindowMode::Fullscreen(MonitorSelection::Current, VideoModeSelection::Current)
+                }
+                _ => WindowMode::Windowed,
+            };
         }
     }
 }

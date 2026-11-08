@@ -179,7 +179,7 @@ pub fn update_hud(
 
     for mut span in &mut text_query {
         **span = format!(
-            "sunset v{} (M1)\nFPS: {} | avg: {} | 0.1% low: {}\nEsc: release cursor  |  F5: save",
+            "sunset v{} (M1)\nFPS: {} | avg: {} | 0.1% low: {}\nEsc: cursor  |  F5: save  |  F11: fullscreen",
             env!("CARGO_PKG_VERSION"),
             fps,
             avg,
