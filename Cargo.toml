@@ -6,8 +6,15 @@ members = ["crates/sunset-core", "crates/sunset"]
 version = "0.1.0"
 edition = "2021"
 
-# Keep dev builds light on memory: no debug info, no optimization. This makes
-# large dependencies (Bevy) compilable on modest-RAM machines.
+# Keep dev builds light on memory: no debug info, no optimization for our own
+# crates. This makes large dependencies (Bevy) compilable on modest-RAM machines.
 [profile.dev]
 debug = false
 opt-level = 0
+
+# But optimize dependencies (Bevy, wgpu, etc.). An unoptimized Bevy render
+# pipeline runs ~10x slower on the CPU, which caps the frame rate regardless of
+# the GPU. Optimizing only dependencies keeps our own crates fast to iterate
+# while letting rendering run at full speed.
+[profile.dev.package."*"]
+opt-level = 3
