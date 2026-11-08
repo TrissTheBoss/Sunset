@@ -47,7 +47,8 @@ impl Player {
     }
 }
 
-/// The M1 hotbar: the five supported target blocks, then empty slots.
+/// The hotbar: the five supported target blocks plus the M2 slab and glass,
+/// then empty slots.
 pub fn default_hotbar() -> [BlockState; 9] {
     [
         state_by_id("minecraft:stone").unwrap(),
@@ -55,8 +56,8 @@ pub fn default_hotbar() -> [BlockState; 9] {
         state_by_id("minecraft:grass_block").unwrap(),
         state_by_id("minecraft:cobblestone").unwrap(),
         state_by_id("minecraft:oak_planks").unwrap(),
-        AIR,
-        AIR,
+        state_by_id("minecraft:smooth_stone_slab[type=bottom]").unwrap(),
+        state_by_id("minecraft:glass").unwrap(),
         AIR,
         AIR,
     ]

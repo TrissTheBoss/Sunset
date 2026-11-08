@@ -4,9 +4,9 @@ A free Rust implementation of the Minecraft Java Edition client and integrated
 single-player game, working toward externally observable vanilla parity with
 Java Edition **26.3**.
 
-> Status: **M1 — A small Creative building loop** (see `PROGRESS.md`). This is an
-> authored development fixture and a Creative-only building loop, not a claim of
-> vanilla parity.
+> Status: **M2 — Prove that the foundation can grow** (see `PROGRESS.md`). This is
+> an authored development fixture and a Creative-only building loop, not a claim
+> of vanilla parity.
 
 ## Prerequisites
 

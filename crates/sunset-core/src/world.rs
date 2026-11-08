@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::block::{is_solid, BlockState, AIR};
+use crate::block::{has_collision, BlockState, AIR};
 use crate::chunk::{Chunk, CHUNK_HEIGHT, CHUNK_SIZE};
 
 /// The authoritative block world.
@@ -60,10 +60,10 @@ impl World {
         self.ensure_chunk(cx, cz).set(lx, wy as usize, lz, state);
     }
 
-    /// Whether the block at world coordinates is solid (participates in
-    /// collision). Out-of-range Y or a missing chunk is non-solid.
-    pub fn is_solid(&self, wx: i32, wy: i32, wz: i32) -> bool {
-        is_solid(self.get_block(wx, wy, wz))
+    /// Whether the block at world coordinates has any collision geometry.
+    /// Out-of-range Y or a missing chunk has none.
+    pub fn has_collision(&self, wx: i32, wy: i32, wz: i32) -> bool {
+        has_collision(self.get_block(wx, wy, wz))
     }
 }
 

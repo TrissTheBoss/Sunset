@@ -27,3 +27,21 @@ implemented and validated; they are not a claim of vanilla parity unless stated.
 - Authored block colors stand in for target textures; visual parity is
   explicitly unverified. No login, launcher, networking, or asset import.
 
+## M2 — Prove that the foundation can grow
+
+- Separated the block model into shape, opacity, and orientation so non-cube
+  blocks can be added without rewriting the world, collision, renderer, or save
+  identity.
+- Added a non-full-cube slab (`minecraft:smooth_stone_slab[type=bottom|top]`)
+  with half-height collision and model.
+- Added transparent glass (`minecraft:glass`) rendered in a separate
+  alpha-blended pass that does not occlude neighbors.
+- Added an orientable oak log (`minecraft:oak_log[axis=x|y|z]`) with distinct
+  end faces.
+- Changed the save format to store namespaced block ids instead of array indices
+  (schema v2), with deterministic (sorted) chunk output.
+- Added a renderer-free deterministic replay test and save round-trip test.
+- The four architectural probes (target resources/shaders, native save data,
+  protocol/authority, worldgen/numeric) remain blocked pending target artifacts.
+
+

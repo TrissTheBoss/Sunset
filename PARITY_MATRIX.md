@@ -36,6 +36,24 @@ window, runs stably, and supports walk/jump/collision, targeting, break/place, a
 hotbar, and save/reopen. States remain `implemented_unverified` because no
 vanilla-target comparison is claimed.
 
+## M2 — Prove that the foundation can grow
+
+| ID | Case | State | Evidence |
+| --- | --- | --- | --- |
+| M2-1 | Non-full-cube slab (half-height collision + model) | implemented_unverified | `block::Shape::SlabBottom/Top`; `physics::collision_box` |
+| M2-2 | Transparent glass (alpha-blended, non-occluding) | implemented_unverified | `block::Opacity::Transparent`; `renderer::build_chunk_meshes` |
+| M2-3 | Orientable oak log (axis x/y/z end faces) | implemented_unverified | `block::end_axis` + `face_color` |
+| M2-4 | Durable save identity (namespaced ids, schema v2) | implemented_unverified | `save.rs` |
+| M2-5 | Renderer-free deterministic replay | implemented_unverified | `simulation::tests` (replay + round-trip) |
+| M2-6 | Target resources/shaders probe | blocked | needs Java Edition 26.3 artifacts |
+| M2-7 | Native save data probe | blocked | needs a copied target region |
+| M2-8 | Protocol/authority probe | blocked | needs an unmodified target server |
+| M2-9 | Worldgen/numeric behavior probe | blocked | needs a target-derived generator fixture |
+
+M2's foundation cases are functionally implemented and tested; the four
+architectural probes are `blocked` pending capture of the exact Java Edition
+26.3 artifacts.
+
 ## Feature families (baseline inventory from PRD 8)
 
 The player/movement, block interaction, and persistence families are partially

@@ -5,13 +5,13 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::block::{BlockState, AIR};
+use crate::block::{block_def, state_by_id, AIR};
 use crate::chunk::{CHUNK_HEIGHT, CHUNK_SIZE};
 use crate::player::Player;
 use crate::world::World;
 
 /// Current save schema version.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
 pub struct SaveData {
@@ -26,20 +26,22 @@ pub struct PlayerSave {
     pub yaw: f32,
     pub pitch: f32,
     pub selected_slot: usize,
-    pub hotbar: Vec<BlockState>,
+    /// Hotbar slots as namespaced block ids (durable, not array indices).
+    pub hotbar: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct ChunkSave {
     pub cx: i32,
     pub cz: i32,
-    /// `(local x, local y, local z, state)` for non-air blocks.
-    pub blocks: Vec<(u8, u8, u8, BlockState)>,
+    /// `(local x, local y, local z, namespaced block id)` for non-air blocks.
+    pub blocks: Vec<(u8, u8, u8, String)>,
 }
 
-/// Serialize the current world and player to a pretty JSON string.
+/// Serialize the current world and player to a pretty JSON string. Chunk order
+/// is sorted so the output is deterministic.
 pub fn to_json(world: &World, player: &Player) -> String {
-    let chunks = world
+    let mut chunks: Vec<ChunkSave> = world
         .chunks()
         .map(|c| {
             let mut blocks = Vec::new();
@@ -48,7 +50,7 @@ pub fn to_json(world: &World, player: &Player) -> String {
                     for x in 0..CHUNK_SIZE {
                         let s = c.get(x, y, z);
                         if s != AIR {
-                            blocks.push((x as u8, y as u8, z as u8, s));
+                            blocks.push((x as u8, y as u8, z as u8, block_def(s).id.to_string()));
                         }
                     }
                 }
@@ -60,6 +62,7 @@ pub fn to_json(world: &World, player: &Player) -> String {
             }
         })
         .collect();
+    chunks.sort_by_key(|c| (c.cx, c.cz));
 
     let data = SaveData {
         schema_version: SCHEMA_VERSION,
@@ -68,7 +71,11 @@ pub fn to_json(world: &World, player: &Player) -> String {
             yaw: player.yaw,
             pitch: player.pitch,
             selected_slot: player.selected_slot,
-            hotbar: player.hotbar.to_vec(),
+            hotbar: player
+                .hotbar
+                .iter()
+                .map(|&s| block_def(s).id.to_string())
+                .collect(),
         },
         chunks,
     };
@@ -99,11 +106,12 @@ pub fn from_json(json: &str) -> Result<(World, Player), String> {
 
     let mut world = World::new();
     for c in &data.chunks {
-        for &(lx, ly, lz, s) in &c.blocks {
+        for (lx, ly, lz, id) in &c.blocks {
+            let s = state_by_id(id).unwrap_or(AIR);
             world.set_block(
-                c.cx * CHUNK_SIZE as i32 + lx as i32,
-                ly as i32,
-                c.cz * CHUNK_SIZE as i32 + lz as i32,
+                c.cx * CHUNK_SIZE as i32 + *lx as i32,
+                *ly as i32,
+                c.cz * CHUNK_SIZE as i32 + *lz as i32,
                 s,
             );
         }
@@ -118,8 +126,10 @@ pub fn from_json(json: &str) -> Result<(World, Player), String> {
     if p.selected_slot < player.hotbar.len() {
         player.selected_slot = p.selected_slot;
     }
-    if p.hotbar.len() == player.hotbar.len() {
-        player.hotbar.copy_from_slice(&p.hotbar);
+    for (i, id) in p.hotbar.iter().enumerate() {
+        if i < player.hotbar.len() {
+            player.hotbar[i] = state_by_id(id).unwrap_or(AIR);
+        }
     }
 
     Ok((world, player))

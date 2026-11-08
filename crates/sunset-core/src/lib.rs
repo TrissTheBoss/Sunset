@@ -17,7 +17,8 @@ pub mod simulation;
 pub mod world;
 
 pub use block::{
-    block_def, is_solid, is_transparent, state_by_id, BlockDef, BlockState, AIR, BLOCKS,
+    block_def, has_collision, is_transparent, occludes, state_by_id, Axis, BlockDef, BlockState,
+    Opacity, Shape, AIR, BLOCKS,
 };
 pub use chunk::{Chunk, CHUNK_HEIGHT, CHUNK_SIZE};
 pub use world::World;

@@ -1,10 +1,12 @@
-//! Block registry: namespaced block states with authored development colors.
+//! Block registry: namespaced block states with separated shape, opacity, and
+//! model (PRD 4.4). This separation is what lets the foundation grow: adding a
+//! slab, an orientable log, or a transparent block must not rewrite the world
+//! model, collision, or save identity.
 //!
-//! M1 uses the target-state candidates `minecraft:stone`, `minecraft:dirt`,
-//! `minecraft:grass_block`, `minecraft:cobblestone`, and `minecraft:oak_planks`
-//! (PRD 3.2). Colors are authored placeholders; visual parity is unverified.
-//! The durable identity is the namespaced [`BlockDef::id`], never the array
-//! index (PRD 4.4).
+//! A block state is a compact index into [`BLOCKS`]; the durable identity is the
+//! namespaced [`BlockDef::id`] (which encodes state properties), never the index.
+
+use glam::Vec3;
 
 /// A compact block-state identifier (index into [`BLOCKS`]).
 pub type BlockState = u32;
@@ -12,17 +14,47 @@ pub type BlockState = u32;
 /// The empty block. Air occupies no volume and is never meshed or collided.
 pub const AIR: BlockState = 0;
 
-/// A registered block definition: a namespaced id, an authored color, and a
-/// collision flag.
+/// A block's collision/geometry shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shape {
+    /// A full 1x1x1 cube.
+    FullCube,
+    /// A half-height slab occupying the bottom half.
+    SlabBottom,
+    /// A half-height slab occupying the top half.
+    SlabTop,
+}
+
+/// How a block is rendered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opacity {
+    /// Fully opaque; occludes the faces of adjacent blocks.
+    Opaque,
+    /// Transparent; does not occlude adjacent faces and is alpha-blended.
+    Transparent,
+}
+
+/// A world axis (used by orientable block models).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Axis {
+    X,
+    Y,
+    Z,
+}
+
+/// A registered block definition.
+#[derive(Debug, Clone, Copy)]
 pub struct BlockDef {
-    /// Namespaced identifier, e.g. `minecraft:grass_block`.
+    /// Namespaced identifier, encoding state properties, e.g.
+    /// `minecraft:smooth_stone_slab[type=bottom]`.
     pub id: &'static str,
     /// Authored development color (sRGB bytes). Not a target texture.
     pub color: [u8; 3],
-    /// Whether the block has a solid collision shape. M1 content is all solid
-    /// cubes; non-full or non-solid shapes arrive in later milestones.
-    pub solid: bool,
+    pub shape: Shape,
+    pub opacity: Opacity,
+    /// For orientable blocks (logs): the axis whose end faces use `end_color`.
+    pub end_axis: Option<Axis>,
+    pub end_color: [u8; 3],
 }
 
 /// Authored development block set. Temporary materials; not a claim of vanilla
@@ -31,39 +63,137 @@ pub const BLOCKS: &[BlockDef] = &[
     BlockDef {
         id: "minecraft:air",
         color: [0, 0, 0],
-        solid: false,
+        shape: Shape::FullCube,
+        opacity: Opacity::Transparent,
+        end_axis: None,
+        end_color: [0, 0, 0],
     },
     BlockDef {
         id: "minecraft:stone",
         color: [125, 125, 125],
-        solid: true,
+        shape: Shape::FullCube,
+        opacity: Opacity::Opaque,
+        end_axis: None,
+        end_color: [0, 0, 0],
     },
     BlockDef {
         id: "minecraft:dirt",
         color: [134, 96, 67],
-        solid: true,
+        shape: Shape::FullCube,
+        opacity: Opacity::Opaque,
+        end_axis: None,
+        end_color: [0, 0, 0],
     },
     BlockDef {
         id: "minecraft:grass_block",
         color: [99, 165, 56],
-        solid: true,
+        shape: Shape::FullCube,
+        opacity: Opacity::Opaque,
+        end_axis: None,
+        end_color: [0, 0, 0],
     },
     BlockDef {
         id: "minecraft:cobblestone",
         color: [108, 108, 108],
-        solid: true,
+        shape: Shape::FullCube,
+        opacity: Opacity::Opaque,
+        end_axis: None,
+        end_color: [0, 0, 0],
     },
     BlockDef {
         id: "minecraft:oak_planks",
         color: [162, 130, 78],
-        solid: true,
+        shape: Shape::FullCube,
+        opacity: Opacity::Opaque,
+        end_axis: None,
+        end_color: [0, 0, 0],
     },
     BlockDef {
         id: "sunset:sand",
         color: [219, 207, 163],
-        solid: true,
+        shape: Shape::FullCube,
+        opacity: Opacity::Opaque,
+        end_axis: None,
+        end_color: [0, 0, 0],
+    },
+    // --- M2 additions: non-full-cube, transparent, orientable ---
+    BlockDef {
+        id: "minecraft:smooth_stone_slab[type=bottom]",
+        color: [130, 130, 130],
+        shape: Shape::SlabBottom,
+        opacity: Opacity::Opaque,
+        end_axis: None,
+        end_color: [0, 0, 0],
+    },
+    BlockDef {
+        id: "minecraft:smooth_stone_slab[type=top]",
+        color: [130, 130, 130],
+        shape: Shape::SlabTop,
+        opacity: Opacity::Opaque,
+        end_axis: None,
+        end_color: [0, 0, 0],
+    },
+    BlockDef {
+        id: "minecraft:glass",
+        color: [198, 226, 226],
+        shape: Shape::FullCube,
+        opacity: Opacity::Transparent,
+        end_axis: None,
+        end_color: [0, 0, 0],
+    },
+    BlockDef {
+        id: "minecraft:oak_log[axis=x]",
+        color: [104, 78, 47],
+        shape: Shape::FullCube,
+        opacity: Opacity::Opaque,
+        end_axis: Some(Axis::X),
+        end_color: [150, 120, 80],
+    },
+    BlockDef {
+        id: "minecraft:oak_log[axis=y]",
+        color: [104, 78, 47],
+        shape: Shape::FullCube,
+        opacity: Opacity::Opaque,
+        end_axis: Some(Axis::Y),
+        end_color: [150, 120, 80],
+    },
+    BlockDef {
+        id: "minecraft:oak_log[axis=z]",
+        color: [104, 78, 47],
+        shape: Shape::FullCube,
+        opacity: Opacity::Opaque,
+        end_axis: Some(Axis::Z),
+        end_color: [150, 120, 80],
     },
 ];
+
+impl BlockDef {
+    /// The block's collision AABB in block-local coordinates `(min, max)`, if
+    /// the block has any collision.
+    pub fn collision_box(&self) -> Option<(Vec3, Vec3)> {
+        match self.shape {
+            Shape::FullCube => Some((Vec3::ZERO, Vec3::ONE)),
+            Shape::SlabBottom => Some((Vec3::ZERO, Vec3::new(1.0, 0.5, 1.0))),
+            Shape::SlabTop => Some((Vec3::new(0.0, 0.5, 0.0), Vec3::ONE)),
+        }
+    }
+
+    /// The authored color for a face (given its outward normal), accounting for
+    /// orientable blocks whose end faces use a different color.
+    pub fn face_color(&self, normal: [i32; 3]) -> [u8; 3] {
+        if let Some(axis) = self.end_axis {
+            let is_end = match axis {
+                Axis::X => normal[0] != 0,
+                Axis::Y => normal[1] != 0,
+                Axis::Z => normal[2] != 0,
+            };
+            if is_end {
+                return self.end_color;
+            }
+        }
+        self.color
+    }
+}
 
 /// Look up a block definition by state. Unknown states fall back to air.
 pub fn block_def(state: BlockState) -> &'static BlockDef {
@@ -78,13 +208,18 @@ pub fn state_by_id(id: &str) -> Option<BlockState> {
         .map(|i| i as BlockState)
 }
 
-/// Whether a block participates in collision (solid).
-pub fn is_solid(state: BlockState) -> bool {
-    block_def(state).solid
+/// Whether a block has any collision geometry.
+pub fn has_collision(state: BlockState) -> bool {
+    block_def(state).collision_box().is_some()
 }
 
-/// Whether a block is treated as transparent for meshing (no face drawn
-/// against it). Every M1 authored block except air is opaque.
+/// Whether a block fully occludes the faces of adjacent blocks (i.e. an
+/// adjacent face against it should not be drawn).
+pub fn occludes(state: BlockState) -> bool {
+    block_def(state).opacity == Opacity::Opaque
+}
+
+/// Whether a block is transparent (rendered with alpha, does not occlude).
 pub fn is_transparent(state: BlockState) -> bool {
-    state == AIR
+    block_def(state).opacity == Opacity::Transparent
 }

@@ -85,12 +85,73 @@ impl Simulation {
                     if block == AIR {
                         return;
                     }
-                    if physics::block_intersects_player(self.player.pos, pos) {
+                    if physics::block_intersects_player(self.player.pos, pos, block) {
                         return;
                     }
                     self.world.set_block(pos[0], pos[1], pos[2], block);
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fixture;
+    use crate::intent::{BlockAction, PlayerIntent};
+    use crate::save;
+
+    const DT: f32 = 1.0 / 20.0;
+
+    /// Replay a fixed authoritative interaction sequence headlessly and return
+    /// the deterministic serialized end state. This is the M2 renderer-free
+    /// replay of the supported M1 interaction sequence (PRD 5.1).
+    fn replay() -> String {
+        let world = fixture::building_yard();
+        let player = Player::new(glam::Vec3::new(8.0, 5.5, 16.0), 0.5, -0.25);
+        let mut sim = Simulation::new(world, player);
+
+        let seq = [
+            PlayerIntent {
+                move_axis: glam::Vec2::new(0.0, 1.0),
+                ..Default::default()
+            },
+            PlayerIntent {
+                move_axis: glam::Vec2::new(0.0, 1.0),
+                ..Default::default()
+            },
+            PlayerIntent {
+                move_axis: glam::Vec2::new(0.0, 1.0),
+                jump: true,
+                ..Default::default()
+            },
+            PlayerIntent {
+                block_action: Some(BlockAction::Break([9, 5, 16])),
+                ..Default::default()
+            },
+            PlayerIntent {
+                block_action: Some(BlockAction::Place([9, 5, 16])),
+                ..Default::default()
+            },
+        ];
+
+        for intent in &seq {
+            sim.step(intent, DT);
+        }
+
+        save::to_json(&sim.world, &sim.player)
+    }
+
+    #[test]
+    fn replay_is_deterministic() {
+        assert_eq!(replay(), replay());
+    }
+
+    #[test]
+    fn replay_roundtrips_through_save() {
+        let json = replay();
+        let (world, player) = save::from_json(&json).expect("load save");
+        assert_eq!(save::to_json(&world, &player), json);
     }
 }

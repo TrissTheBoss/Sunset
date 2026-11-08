@@ -2,6 +2,7 @@
 
 use glam::Vec3;
 
+use crate::block::{block_def, BlockState, AIR};
 use crate::world::World;
 
 /// Small bias used to keep the player just off block faces.
@@ -14,7 +15,7 @@ pub struct Aabb {
 }
 
 impl Aabb {
-    /// Whether the box at `pos` overlaps any solid block.
+    /// Whether the box at `pos` overlaps any block's collision box.
     pub fn collides(&self, world: &World, pos: Vec3) -> bool {
         let min = pos - self.half;
         let max = pos + self.half;
@@ -23,8 +24,20 @@ impl Aabb {
         for y in (min_i.y as i32)..=(max_i.y as i32) {
             for z in (min_i.z as i32)..=(max_i.z as i32) {
                 for x in (min_i.x as i32)..=(max_i.x as i32) {
-                    if world.is_solid(x, y, z) {
-                        return true;
+                    if let Some((bmin, bmax)) = block_def(world.get_block(x, y, z)).collision_box()
+                    {
+                        let (ox, oy, oz) = (x as f32, y as f32, z as f32);
+                        let bbmin = Vec3::new(bmin.x + ox, bmin.y + oy, bmin.z + oz);
+                        let bbmax = Vec3::new(bmax.x + ox, bmax.y + oy, bmax.z + oz);
+                        if min.x < bbmax.x
+                            && max.x > bbmin.x
+                            && min.y < bbmax.y
+                            && max.y > bbmin.y
+                            && min.z < bbmax.z
+                            && max.z > bbmin.z
+                        {
+                            return true;
+                        }
                     }
                 }
             }
@@ -67,32 +80,42 @@ pub fn move_entity(world: &World, aabb: &Aabb, pos: &mut Vec3, vel: &mut Vec3, d
 fn resolve(world: &World, aabb: &Aabb, pos: Vec3, axis: usize, dir: f32) -> f32 {
     let min = pos - aabb.half;
     let max = pos + aabb.half;
-    let mut best: Option<i32> = None;
+    let mut best: Option<f32> = None;
     for y in (min.y.floor() as i32)..=(max.y.floor() as i32) {
         for z in (min.z.floor() as i32)..=(max.z.floor() as i32) {
             for x in (min.x.floor() as i32)..=(max.x.floor() as i32) {
-                if !world.is_solid(x, y, z) {
+                let Some((bmin, bmax)) = block_def(world.get_block(x, y, z)).collision_box() else {
                     continue;
-                }
-                let c = match axis {
-                    0 => x,
-                    1 => y,
-                    _ => z,
+                };
+                let (ox, oy, oz) = (x as f32, y as f32, z as f32);
+                // The face of the block's box that the entity is pushing into.
+                let face = if dir > 0.0 {
+                    match axis {
+                        0 => bmin.x + ox,
+                        1 => bmin.y + oy,
+                        _ => bmin.z + oz,
+                    }
+                } else {
+                    match axis {
+                        0 => bmax.x + ox,
+                        1 => bmax.y + oy,
+                        _ => bmax.z + oz,
+                    }
                 };
                 best = Some(match best {
-                    None => c,
+                    None => face,
                     Some(b) => {
                         if dir > 0.0 {
-                            b.min(c)
+                            b.min(face)
                         } else {
-                            b.max(c)
+                            b.max(face)
                         }
                     }
                 });
             }
         }
     }
-    let Some(block) = best else {
+    let Some(face) = best else {
         return match axis {
             0 => pos.x,
             1 => pos.y,
@@ -105,26 +128,30 @@ fn resolve(world: &World, aabb: &Aabb, pos: Vec3, axis: usize, dir: f32) -> f32 
         _ => aabb.half.z,
     };
     if dir > 0.0 {
-        block as f32 - half - EPSILON
+        face - half - EPSILON
     } else {
-        block as f32 + 1.0 + half + EPSILON
+        face + half + EPSILON
     }
 }
 
-/// Whether placing a unit block at `block` would intersect the player's box at
+/// Whether placing `state` at `block` would intersect the player's box at
 /// `player_pos` (placement restriction, PRD 3.3 step 3).
-pub fn block_intersects_player(player_pos: Vec3, block: [i32; 3]) -> bool {
+pub fn block_intersects_player(player_pos: Vec3, block: [i32; 3], state: BlockState) -> bool {
     let half = Vec3::new(0.3, 0.9, 0.3);
     let pmin = player_pos - half;
     let pmax = player_pos + half;
-    let bmin = Vec3::new(block[0] as f32, block[1] as f32, block[2] as f32);
-    let bmax = bmin + Vec3::ONE;
-    pmin.x < bmax.x
-        && pmax.x > bmin.x
-        && pmin.y < bmax.y
-        && pmax.y > bmin.y
-        && pmin.z < bmax.z
-        && pmax.z > bmin.z
+    let Some((bmin, bmax)) = block_def(state).collision_box() else {
+        return false;
+    };
+    let (ox, oy, oz) = (block[0] as f32, block[1] as f32, block[2] as f32);
+    let bbmin = Vec3::new(bmin.x + ox, bmin.y + oy, bmin.z + oz);
+    let bbmax = Vec3::new(bmax.x + ox, bmax.y + oy, bmax.z + oz);
+    pmin.x < bbmax.x
+        && pmax.x > bbmin.x
+        && pmin.y < bbmax.y
+        && pmax.y > bbmin.y
+        && pmin.z < bbmax.z
+        && pmax.z > bbmin.z
 }
 
 /// A voxel DDA raycast from `origin` along normalized `dir`, up to `max_dist`.
@@ -198,7 +225,7 @@ pub fn raycast(
         if t > max_dist {
             return None;
         }
-        if world.is_solid(x, y, z) {
+        if world.get_block(x, y, z) != AIR {
             return Some(([x, y, z], face));
         }
         if t_max_x < t_max_y && t_max_x < t_max_z {

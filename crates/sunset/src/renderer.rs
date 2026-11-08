@@ -5,7 +5,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 
-use sunset_core::block::{block_def, is_transparent};
+use sunset_core::block::{block_def, is_transparent, occludes, AIR};
 use sunset_core::chunk::{Chunk, CHUNK_HEIGHT, CHUNK_SIZE};
 use sunset_core::world::World as GameWorld;
 
@@ -21,62 +21,107 @@ pub struct TargetHit {
     pub face: [i32; 3],
 }
 
-/// Marker for a spawned chunk mesh, carrying identity and revision so edits can
-/// trigger a targeted re-mesh (PRD 4.6).
+/// Marker for a spawned chunk mesh, carrying identity, revision, and which pass
+/// (opaque vs transparent) it belongs to, so edits can trigger a targeted
+/// re-mesh (PRD 4.6).
 #[derive(Component)]
 pub struct ChunkMesh {
     pub cx: i32,
     pub cz: i32,
     pub revision: u64,
+    pub transparent: bool,
 }
 
-/// Unit-cube face corners, one entry per face, four corners each.
-const FACES: [[[f32; 3]; 4]; 6] = [
-    // +Y (top)
-    [
-        [0.0, 1.0, 0.0],
-        [1.0, 1.0, 0.0],
-        [1.0, 1.0, 1.0],
-        [0.0, 1.0, 1.0],
-    ],
-    // -Y (bottom)
-    [
-        [0.0, 0.0, 0.0],
-        [1.0, 0.0, 0.0],
-        [1.0, 0.0, 1.0],
-        [0.0, 0.0, 1.0],
-    ],
-    // +X (east)
-    [
-        [1.0, 0.0, 0.0],
-        [1.0, 1.0, 0.0],
-        [1.0, 1.0, 1.0],
-        [1.0, 0.0, 1.0],
-    ],
-    // -X (west)
-    [
-        [0.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0],
-        [0.0, 1.0, 1.0],
-        [0.0, 1.0, 0.0],
-    ],
-    // +Z (south)
-    [
-        [0.0, 0.0, 1.0],
-        [1.0, 0.0, 1.0],
-        [1.0, 1.0, 1.0],
-        [0.0, 1.0, 1.0],
-    ],
-    // -Z (north)
-    [
-        [0.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0],
-        [1.0, 1.0, 0.0],
-        [1.0, 0.0, 0.0],
-    ],
-];
+/// The four corners of face `face` for an axis-aligned box `[min, max]`.
+fn face_corners(min: Vec3, max: Vec3, face: usize) -> [[f32; 3]; 4] {
+    match face {
+        0 => [
+            [min.x, max.y, min.z],
+            [max.x, max.y, min.z],
+            [max.x, max.y, max.z],
+            [min.x, max.y, max.z],
+        ],
+        1 => [
+            [min.x, min.y, min.z],
+            [max.x, min.y, min.z],
+            [max.x, min.y, max.z],
+            [min.x, min.y, max.z],
+        ],
+        2 => [
+            [max.x, min.y, min.z],
+            [max.x, max.y, min.z],
+            [max.x, max.y, max.z],
+            [max.x, min.y, max.z],
+        ],
+        3 => [
+            [min.x, min.y, min.z],
+            [min.x, min.y, max.z],
+            [min.x, max.y, max.z],
+            [min.x, max.y, min.z],
+        ],
+        4 => [
+            [min.x, min.y, max.z],
+            [max.x, min.y, max.z],
+            [max.x, max.y, max.z],
+            [min.x, max.y, max.z],
+        ],
+        5 => [
+            [min.x, min.y, min.z],
+            [min.x, max.y, min.z],
+            [max.x, max.y, min.z],
+            [max.x, min.y, min.z],
+        ],
+        _ => unreachable!(),
+    }
+}
 
-/// Neighbor offsets indexed like [`FACES`].
+/// An in-progress mesh (opaque or transparent), accumulated as vertex data.
+struct MeshData {
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    colors: Vec<[f32; 4]>,
+    indices: Vec<u32>,
+}
+
+impl MeshData {
+    fn new() -> Self {
+        Self {
+            positions: Vec::new(),
+            normals: Vec::new(),
+            colors: Vec::new(),
+            indices: Vec::new(),
+        }
+    }
+
+    fn add_face(&mut self, corners: [[f32; 3]; 4], normal: [f32; 3], color: [f32; 4]) {
+        let base = self.positions.len() as u32;
+        for c in corners {
+            self.positions.push(c);
+            self.normals.push(normal);
+            self.colors.push(color);
+        }
+        self.indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.indices.is_empty()
+    }
+
+    fn build(self) -> Mesh {
+        let mut mesh = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+        );
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.colors);
+        mesh.insert_indices(Indices::U32(self.indices));
+        mesh
+    }
+}
+
+/// Neighbor offsets for each face (indexed like `face_corners`).
 const FACE_NORMALS: [[i32; 3]; 6] = [
     [0, 1, 0],
     [0, -1, 0],
@@ -95,31 +140,51 @@ pub fn spawn_chunk_meshes(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Single shared unlit material: block color is baked into vertex colors.
-    let material = materials.add(StandardMaterial {
+    // Two shared unlit materials: opaque and transparent (alpha-blended).
+    let opaque_mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         unlit: true,
         cull_mode: None,
         ..default()
     });
+    let transparent_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        unlit: true,
+        cull_mode: None,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
 
     let world = &session.0.world;
     for chunk in world.chunks() {
-        let handle = meshes.add(build_chunk_mesh(world, chunk));
+        let (opaque, transparent) = build_chunk_meshes(world, chunk);
+        let ox = (chunk.cx * CHUNK_SIZE as i32) as f32;
+        let oz = (chunk.cz * CHUNK_SIZE as i32) as f32;
+        let tf = Transform::from_xyz(ox, 0.0, oz);
         commands.spawn((
-            Mesh3d(handle),
-            MeshMaterial3d(material.clone()),
-            Transform::from_xyz(
-                (chunk.cx * CHUNK_SIZE as i32) as f32,
-                0.0,
-                (chunk.cz * CHUNK_SIZE as i32) as f32,
-            ),
+            Mesh3d(meshes.add(opaque.build())),
+            MeshMaterial3d(opaque_mat.clone()),
+            tf,
             ChunkMesh {
                 cx: chunk.cx,
                 cz: chunk.cz,
                 revision: chunk.revision,
+                transparent: false,
             },
         ));
+        if !transparent.is_empty() {
+            commands.spawn((
+                Mesh3d(meshes.add(transparent.build())),
+                MeshMaterial3d(transparent_mat.clone()),
+                tf,
+                ChunkMesh {
+                    cx: chunk.cx,
+                    cz: chunk.cz,
+                    revision: chunk.revision,
+                    transparent: true,
+                },
+            ));
+        }
     }
 }
 
@@ -134,7 +199,9 @@ pub fn remesh_system(
     for (mut cm, mut mesh3d) in &mut query {
         if let Some(chunk) = world.get_chunk(cm.cx, cm.cz) {
             if chunk.revision != cm.revision {
-                *mesh3d = Mesh3d(meshes.add(build_chunk_mesh(world, chunk)));
+                let (opaque, transparent) = build_chunk_meshes(world, chunk);
+                let data = if cm.transparent { transparent } else { opaque };
+                *mesh3d = Mesh3d(meshes.add(data.build()));
                 cm.revision = chunk.revision;
             }
         }
@@ -180,13 +247,11 @@ fn draw_box(gizmos: &mut Gizmos, min: Vec3, max: Vec3, color: Color) {
     }
 }
 
-/// Build a mesh for one chunk, emitting only faces that border air
-/// (including across chunk boundaries via world-coordinate lookup).
-fn build_chunk_mesh(world: &GameWorld, chunk: &Chunk) -> Mesh {
-    let mut positions: Vec<[f32; 3]> = Vec::new();
-    let mut normals: Vec<[f32; 3]> = Vec::new();
-    let mut colors: Vec<[f32; 4]> = Vec::new();
-    let mut indices: Vec<u32> = Vec::new();
+/// Build the opaque and transparent meshes for one chunk, emitting only faces
+/// that border a non-occluding block (including across chunk boundaries).
+fn build_chunk_meshes(world: &GameWorld, chunk: &Chunk) -> (MeshData, MeshData) {
+    let mut opaque = MeshData::new();
+    let mut transparent = MeshData::new();
 
     let base_x = chunk.cx * CHUNK_SIZE as i32;
     let base_z = chunk.cz * CHUNK_SIZE as i32;
@@ -195,57 +260,46 @@ fn build_chunk_mesh(world: &GameWorld, chunk: &Chunk) -> Mesh {
         for z in 0..CHUNK_SIZE {
             for x in 0..CHUNK_SIZE {
                 let state = chunk.get(x, y, z);
-                if is_transparent(state) {
+                if state == AIR {
                     continue;
                 }
                 let def = block_def(state);
-                let r = def.color[0] as f32 / 255.0;
-                let g = def.color[1] as f32 / 255.0;
-                let b = def.color[2] as f32 / 255.0;
-
+                let Some((bmin, bmax)) = def.collision_box() else {
+                    continue;
+                };
+                let alpha = if is_transparent(state) { 0.45 } else { 1.0 };
                 let wx = base_x + x as i32;
                 let wz = base_z + z as i32;
                 let wy = y as i32;
+                let target = if is_transparent(state) {
+                    &mut transparent
+                } else {
+                    &mut opaque
+                };
 
                 for face in 0..6 {
                     let [nx, ny, nz] = FACE_NORMALS[face];
-                    if !is_transparent(world.get_block(wx + nx, wy + ny, wz + nz)) {
+                    if occludes(world.get_block(wx + nx, wy + ny, wz + nz)) {
                         continue;
                     }
-
+                    let fc = def.face_color([nx, ny, nz]);
                     let shade = FACE_SHADE[face];
-                    let color: [f32; 4] = [r * shade, g * shade, b * shade, 1.0];
-                    let base = positions.len() as u32;
-
-                    for corner in FACES[face] {
-                        positions.push([
-                            x as f32 + corner[0],
-                            y as f32 + corner[1],
-                            z as f32 + corner[2],
-                        ]);
-                        normals.push([nx as f32, ny as f32, nz as f32]);
-                        colors.push(color);
-                    }
-                    indices.extend_from_slice(&[
-                        base,
-                        base + 1,
-                        base + 2,
-                        base,
-                        base + 2,
-                        base + 3,
-                    ]);
+                    let color: [f32; 4] = [
+                        fc[0] as f32 / 255.0 * shade,
+                        fc[1] as f32 / 255.0 * shade,
+                        fc[2] as f32 / 255.0 * shade,
+                        alpha,
+                    ];
+                    let corners = face_corners(
+                        Vec3::new(x as f32 + bmin.x, y as f32 + bmin.y, z as f32 + bmin.z),
+                        Vec3::new(x as f32 + bmax.x, y as f32 + bmax.y, z as f32 + bmax.z),
+                        face,
+                    );
+                    target.add_face(corners, [nx as f32, ny as f32, nz as f32], color);
                 }
             }
         }
     }
 
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-    mesh.insert_indices(Indices::U32(indices));
-    mesh
+    (opaque, transparent)
 }

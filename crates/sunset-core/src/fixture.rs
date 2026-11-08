@@ -16,6 +16,14 @@ pub fn building_yard() -> World {
     let cobble = state_by_id("minecraft:cobblestone").expect("registered block");
     let planks = state_by_id("minecraft:oak_planks").expect("registered block");
     let sand = state_by_id("sunset:sand").expect("registered block");
+    // M2 blocks: non-full-cube, transparent, orientable.
+    let slab_bottom =
+        state_by_id("minecraft:smooth_stone_slab[type=bottom]").expect("registered block");
+    let slab_top = state_by_id("minecraft:smooth_stone_slab[type=top]").expect("registered block");
+    let glass = state_by_id("minecraft:glass").expect("registered block");
+    let log_x = state_by_id("minecraft:oak_log[axis=x]").expect("registered block");
+    let log_y = state_by_id("minecraft:oak_log[axis=y]").expect("registered block");
+    let log_z = state_by_id("minecraft:oak_log[axis=z]").expect("registered block");
 
     // Flat ground spanning several chunks on both sides of the origin.
     for wx in -32..=32 {
@@ -54,6 +62,24 @@ pub fn building_yard() -> World {
     for (wx, wz) in [(-16, 10), (12, -14), (18, 6), (-20, -4)] {
         world.set_block(wx, 5, wz, sand);
     }
+
+    // M2: a glass wall with a window you can see through.
+    for wy in 5..=8 {
+        for wx in 11..=14 {
+            world.set_block(wx, wy, -12, glass);
+        }
+    }
+    // M2: slab steps leading up to a small top-slab platform.
+    for (i, wx) in (16..=20).enumerate() {
+        let wy = 4 + i as i32;
+        world.set_block(wx, wy, -16, slab_bottom);
+    }
+    world.set_block(21, 9, -16, slab_top);
+    world.set_block(21, 9, -15, slab_top);
+    // M2: an orientable log stack (x, then y, then z axes).
+    world.set_block(-14, 5, 6, log_x);
+    world.set_block(-14, 6, 6, log_y);
+    world.set_block(-14, 7, 6, log_z);
 
     world
 }
