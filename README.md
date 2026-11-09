@@ -1,75 +1,43 @@
-# Sunset
+# Sunset engineering handbook
+Revision 1 · 9 November 2026 · Rust + WGSL · DeepSeek V4 Pro · VS Code + Cline
 
-A free Rust implementation of the Minecraft Java Edition client and integrated
-single-player game, working toward externally observable vanilla parity with
-Java Edition **26.3**.
+This is a specification and management kit, not implemented game code. The handbook branch replaces the old active file tree with these documents while retaining its ancestry. Main and the live Wiki are not changed by this delivery. GitHub's Download ZIP for this branch provides the complete bundle.
 
-> Status: **M2 — Prove that the foundation can grow** (see `PROGRESS.md`). This is
-> an authored development fixture and a Creative-only building loop, not a claim
-> of vanilla parity.
+Start with [PRD](docs/01-PRD.md), [parity](docs/02-Parity.md), [roadmap](docs/10-Roadmap.md), [Cline setup](docs/11-Cline.md), then [first task](docs/12-First-Task.md). Follow [repository replacement](docs/13-GitHub-Wiki.md) before making this the active project. Keep [progress](docs/tracking/PROGRESS.md), [coverage](docs/tracking/PARITY.md), [risks](docs/tracking/RISKS.md) and [decisions](docs/decisions/INDEX.md) current.
 
-## Prerequisites
+The existing Sunset README inspected on 9 November 2026 identifies Java Edition 26.3 and a small raw-wgpu prototype. Keep 26.3 as the proposed reference, subject to M0 verification. Do not inherit its implementation or completion claims. Exact artifacts, protocol and pack versions must be pinned before parity work.
 
-- Rust toolchain (the project is developed on `rustc 1.99.1` / `cargo 1.99.1`).
-- A desktop OS with a GPU. Validated on the owner's Windows x86_64 machine.
+## Important corrections
 
-## Launch
+- 4,000 FPS is a stretch goal for a named workload on your hardware, not a promise in every scene. The full frame interval is only 250 microseconds.
+- Full observable parity is the objective; finite tests establish coverage, not a mathematical proof of all behavior.
+- LOD and upscaling intentionally alter images. Enhanced is separate from native-resolution Vanilla Fidelity.
+- Normal protocol/gameplay behavior supports server interoperability. Acceptance by every third-party anticheat cannot be guaranteed.
+- Rust and WGSL fit the project. C/C++ do not inherently require garbage collection; leaks and GC are different concerns. Safe Rust still permits logical leaks, exhaustion and deadlocks.
+- Comments ordinarily are not executable instructions. The requested no-comment rule applies to first-party production Rust/WGSL source; design explanations live in Markdown. Required licenses remain.
+- Foundation first means renderer, automation, extension contracts and performance infrastructure tested using representative synthetic scenes before mass content. Do not implement every imaginable optimization before measuring real work.
 
-```sh
-cargo run -p sunset
-```
+## Contents
 
-This builds and opens a window showing a small authored block world centered on
-the origin, rendered by a custom raw `winit` + `wgpu` renderer (no Bevy).
-
-## Building on this machine
-
-The workspace has two crates: `sunset-core` (the authoritative world model and
-simulation) and `sunset` (the raw `winit` + `wgpu` renderer). The dev profile
-(`Cargo.toml`) sets `debug = false` and `opt-level = 0` for our crates while
-optimizing dependencies, which keeps builds light on memory.
-
-## Controls
-
-| Input | Action |
+| Document | Purpose |
 | --- | --- |
-| Mouse look | Look around (while cursor is captured) |
-| `W` / `A` / `S` / `D` | Walk forward / left / back / right |
-| `Space` | Jump |
-| `Left click` | Break the targeted block (or capture the cursor) |
-| `Right click` | Place the selected hotbar block |
-| `1` … `9` | Select a hotbar slot |
-| `F5` | Save the world + player state |
-| `F11` | Toggle fullscreen |
-| `Esc` | Release the cursor |
+| [01 PRD](docs/01-PRD.md) | Requirements and scope |
+| [02 Parity](docs/02-Parity.md) | Reference lock and evidence |
+| [03 Architecture](docs/03-Architecture.md) | Language and ownership boundaries |
+| [04 Renderer](docs/04-Renderer.md) | Custom pipeline, LOD, upscaling, settings |
+| [05 Optimizations](docs/05-Optimizations.md) | Candidates with correctness gates |
+| [06 Modding](docs/06-Modding-Packs.md) | Modules and pack compatibility |
+| [07 Testing](docs/07-Automated-Testing.md) | Unattended runner contract |
+| [08 Visual QA](docs/08-Visual-QA.md) | Textures/models/screenshots |
+| [09 Benchmarks](docs/09-Benchmarks.md) | Repeatable performance evidence |
+| [10 Roadmap](docs/10-Roadmap.md) | Foundation-first milestones |
+| [11 Cline](docs/11-Cline.md) | Model configuration and workflow |
+| [12 First task](docs/12-First-Task.md) | Implementation kickoff |
+| [13 GitHub/Wiki](docs/13-GitHub-Wiki.md) | Replacement and publication |
+| [14 Security/assets](docs/14-Security-Assets.md) | Local resources and trust |
+| [15 Tracking](docs/15-Tracking-Rules.md) | Progress and decisions |
+| [16 Research](docs/16-Research.md) | Sources and Horizon inspiration |
+| [17 Release](docs/17-Release.md) | Shipping gates |
+| [Wiki](wiki/Home.md) | Publishable documentation starter |
 
-A black outline marks the block under the crosshair. On first launch the world
-is generated from the `building-yard` fixture; saves are reloaded automatically
-on the next launch (`saves/building-yard.sunset`). An on-screen HUD (hotbar,
-crosshair, and FPS text) is not yet implemented in the raw renderer.
-
-## Local Minecraft assets
-
-Sunset loads block textures from a local, user-provided Minecraft installation
-(the client jar under `.minecraft`), so supported blocks render with the real
-`minecraft:*` textures. It auto-detects `%APPDATA%\.minecraft`, or you can point
-it elsewhere with the `SUNSET_MINECRAFT_DIR` environment variable. If no
-installation is found, it falls back to authored flat colors. Textures are
-loaded for reading only; nothing is bundled, redistributed, or written back.
-
-## Current limitations
-
-- Block textures are loaded, but full models/shaders/post-effects are not yet;
-  visual parity remains unverified.
-- No login, launcher, or networking (intentionally deferred).
-- No pause menu yet (pause is a placeholder); save is manual via `F5`.
-
-See `PRD.md` for the full requirements and `PARITY_MATRIX.md` for coverage.
-Development process and the milestone commit/push rule are in
-`CONTRIBUTING.md`; browseable documentation lives on the
-[GitHub wiki](https://github.com/TrissTheBoss/Sunset/wiki).
-
-# Trademark and Copyright Notice
-> Sunset is an independent, unaffiliated project and is not sponsored, endorsed, or approved by Microsoft Corporation or Mojang Studios. “Microsoft,” “Mojang,” “Minecraft,” and “Minecraft: Java Edition” are trademarks or registered trademarks of their respective owners.
-
-> This project contains original code and development assets. It does not include or distribute Microsoft or Mojang source code, game files, or textures. Any references to Minecraft or Java Edition describe the project’s intended compatibility target and do not imply ownership, affiliation, or endorsement.
+All cargo xtask commands are proposed interfaces to implement. This kit does not supply a functioning test runner or measured benchmark results. Missing implementations are NOT IMPLEMENTED, never PASS.

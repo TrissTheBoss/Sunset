@@ -1,9 +1,0 @@
-/target/
-/.idea/
-/.vscode/
-*.log
-*.tmp
-
-# Imported local game data must never be tracked.
-/local-assets/
-/assets-imported/
