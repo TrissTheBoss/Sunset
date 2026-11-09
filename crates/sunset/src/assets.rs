@@ -1,8 +1,5 @@
 //! Loads Minecraft block textures from a local, user-provided Minecraft
-//! installation (PRD: local import of user assets). Ported from the Bevy
-//! adapter's `mcassets.rs`; this copy is Bevy-independent so the raw renderer
-//! can use it directly. Consolidation into a shared crate happens later if the
-//! raw path is kept (see RAW_RENDERER_PLAN.md decision log).
+//! installation (PRD: local import of user assets).
 
 use std::collections::HashMap;
 use std::fs::File;

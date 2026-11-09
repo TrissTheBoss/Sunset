@@ -16,28 +16,18 @@ Java Edition **26.3**.
 ## Launch
 
 ```sh
-cargo run -p sunset -- --dev-fixture building-yard
+cargo run -p sunset
 ```
 
 This builds and opens a window showing a small authored block world centered on
-the origin. The first build compiles Bevy and can take several minutes.
+the origin, rendered by a custom raw `winit` + `wgpu` renderer (no Bevy).
 
 ## Building on this machine
 
-Bevy's dependency tree (notably the `windows`, `bevy_reflect`, and `bevy_ecs`
-crates) needs more compiler stack and memory than the default toolchain provides
-on the development machine (16 GiB RAM). Two workarounds are applied:
-
-1. **Low-memory profile** (`Cargo.toml`): the dev profile sets `debug = false`
-   and `opt-level = 0`, avoiding out-of-memory crashes.
-2. **Bigger compiler stack**: the `windows`/`bevy_reflect` crates overflow
-   `rustc`'s default main-thread stack. A patched `rustc` with a larger stack is
-   used via the `RUSTC` environment variable, produced with the `tools/patch_stack.rs`
-   helper (copy `rustc.exe` to `rustc-bigstack.exe`, patch it, and set
-   `RUSTC` to that path).
-
-A machine with more RAM (or a future rustc/windows-crate fix) should not need
-these workarounds; they are not part of the product behavior.
+The workspace has two crates: `sunset-core` (the authoritative world model and
+simulation) and `sunset` (the raw `winit` + `wgpu` renderer). The dev profile
+(`Cargo.toml`) sets `debug = false` and `opt-level = 0` for our crates while
+optimizing dependencies, which keeps builds light on memory.
 
 ## Controls
 
@@ -50,12 +40,13 @@ these workarounds; they are not part of the product behavior.
 | `Right click` | Place the selected hotbar block |
 | `1` … `9` | Select a hotbar slot |
 | `F5` | Save the world + player state |
+| `F11` | Toggle fullscreen |
 | `Esc` | Release the cursor |
 
-An on-screen HUD shows the hotbar, a crosshair, the build identity and live FPS.
 A black outline marks the block under the crosshair. On first launch the world
 is generated from the `building-yard` fixture; saves are reloaded automatically
-on the next launch (`saves/building-yard.sunset`).
+on the next launch (`saves/building-yard.sunset`). An on-screen HUD (hotbar,
+crosshair, and FPS text) is not yet implemented in the raw renderer.
 
 ## Local Minecraft assets
 

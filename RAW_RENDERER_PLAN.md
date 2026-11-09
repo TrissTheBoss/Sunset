@@ -17,8 +17,8 @@ adapted to Sunset's data and measured bottlenecks, not copied wholesale.
 
 Reach high, stable FPS on the `building-yard` fixture (AMD Radeon RX 6800 XT,
 Vulkan) while keeping the same world, simulation, player controller, and target
-textures. The Bevy adapter remains the reference for correctness; the raw
-renderer is the performance path.
+textures. This is now the sole renderer: the Bevy adapter was removed and
+`sunset-raw` was renamed to `sunset`.
 
 Per PRD and CORE_PHILOSOPHY: **vanilla parity first, performance second.** An
 optimization must not alter required behavior. The 3000 FPS figure is a
@@ -70,8 +70,8 @@ overhead plus the dev (unoptimized) build.
 
 ## 4. Architecture and reconciliation
 
-`sunset-core` stays the authoritative layer; `sunset-raw` is the raw renderer;
-`sunset` (Bevy) stays as the comparison path. All three already exist.
+`sunset-core` stays the authoritative layer; `sunset` (formerly `sunset-raw`)
+is the raw renderer. The Bevy adapter has been removed.
 
 ```
 sunset-core (world/simulation/physics)   <-- authoritative, unchanged
@@ -482,7 +482,8 @@ revision and the Bevy reference under equivalent conditions.
 
 ## 19. Decision log
 
-- **`sunset-raw` as a separate crate** — keeps the Bevy app for A/B comparison.
+- **`sunset-raw` became `sunset`** — the Bevy app was removed once the raw path
+  was validated, so the raw renderer is now the only renderer.
 - **Reuse `sunset-core` unchanged** — the world/simulation is renderer-agnostic.
 - **Per-chunk (or section) derived render meshes, not the combined world mesh** —
   the combined mesh was a benchmark shortcut; it must not force whole-world

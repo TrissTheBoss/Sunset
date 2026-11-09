@@ -3,6 +3,16 @@
 Records project artifacts and compatibility claims. Entries describe what is
 implemented and validated; they are not a claim of vanilla parity unless stated.
 
+## Renderer consolidation — drop Bevy
+
+- Removed the Bevy 0.20.1 adapter; the raw `winit` + `wgpu` renderer (formerly
+  `sunset-raw`) is now the sole renderer and lives at `crates/sunset`.
+- Ported the gameplay wiring that only the Bevy adapter had: hotbar selection
+  (number keys 1–9), save/load (`F5` + automatic reload), and fullscreen
+  (`F11`).
+- `sunset-core` is unchanged. The on-screen HUD (hotbar/crosshair/FPS text)
+  remains deferred in the raw renderer.
+
 ## M0 — First useful pixels
 
 - Added a two-crate Rust workspace: `sunset-core` (authoritative world model —

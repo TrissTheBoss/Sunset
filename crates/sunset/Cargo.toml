@@ -4,8 +4,12 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+wgpu = "30.0.1"
+winit = "0.30.13"
+pollster = "0.3"
+bytemuck = { version = "1", features = ["derive"] }
+glam = "0.33"
 sunset-core = { path = "../sunset-core" }
-bevy = "0.20.1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 serde = { version = "1", features = ["derive"] }

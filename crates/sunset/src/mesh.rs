@@ -1,7 +1,6 @@
-//! Greedy chunk meshing, ported from the Bevy adapter's `renderer.rs`. Emits
-//! raw interleaved vertices + indices (no Bevy `Mesh`) with chunk offsets baked
-//! into world-space positions, so the renderer issues a single uniform (no
-//! per-chunk transform).
+//! Greedy chunk meshing. Emits raw interleaved vertices + indices with chunk
+//! offsets baked into world-space positions, so the renderer issues a single
+//! uniform (no per-chunk transform).
 
 use std::collections::HashMap;
 
