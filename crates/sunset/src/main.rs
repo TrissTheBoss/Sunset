@@ -570,80 +570,57 @@ impl Renderer {
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
-        // Opaque pass: clears color + depth and writes depth.
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("opaque"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.53,
-                            g: 0.81,
-                            b: 0.92,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
+        // One physical pass (M17): clear colour+depth once, draw opaque, switch
+        // pipeline to alpha-blend transparency, then switch to the outline.
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("world"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.53,
+                        g: 0.81,
+                        b: 0.92,
+                        a: 1.0,
                     }),
-                    stencil_ops: None,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
                 }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_pipeline(&self.opaque_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            for (&(cx, cz), chunk) in &self.chunks {
-                if !frustum.intersects_chunk(cx, cz) {
-                    continue;
-                }
-                if chunk.opaque.index_count > 0 {
-                    pass.set_vertex_buffer(0, chunk.opaque.vertex_buffer.slice(..));
-                    pass.set_index_buffer(
-                        chunk.opaque.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    pass.draw_indexed(0..chunk.opaque.index_count, 0, 0..1);
-                }
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+
+        // Opaque geometry (writes depth).
+        pass.set_pipeline(&self.opaque_pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        for (&(cx, cz), chunk) in &self.chunks {
+            if !frustum.intersects_chunk(cx, cz) {
+                continue;
+            }
+            if chunk.opaque.index_count > 0 {
+                pass.set_vertex_buffer(0, chunk.opaque.vertex_buffer.slice(..));
+                pass.set_index_buffer(
+                    chunk.opaque.index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                pass.draw_indexed(0..chunk.opaque.index_count, 0, 0..1);
             }
         }
 
-        // Transparent pass: loads the opaque color/depth, alpha-blends, and
-        // tests depth without writing it (so glass is correctly occluded and
-        // occludes, but doesn't punch holes in the depth buffer).
+        // Transparency: switch pipeline, alpha-blend back-to-front, test depth
+        // without writing.
         if self.chunks.values().any(|c| c.transparent.index_count > 0) {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("transparent"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
             pass.set_pipeline(&self.transparent_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             // Back-to-front (furthest first) for correct alpha blending. Reuse
@@ -671,37 +648,15 @@ impl Renderer {
             }
         }
 
-        // Highlight pass: draw the targeted block's outline over the scene.
+        // Outline: switch pipeline, draw the targeted block's highlight.
         if outline {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("outline"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
             pass.set_pipeline(&self.line_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
             pass.draw(0..24, 0..1);
         }
 
+        drop(pass);
         queue.submit([encoder.finish()]);
     }
 
