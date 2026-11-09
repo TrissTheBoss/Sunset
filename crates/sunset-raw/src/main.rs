@@ -5,20 +5,29 @@
 mod assets;
 mod mesh;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use glam::Vec3;
+use glam::{Quat, Vec2, Vec3};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::WindowEvent;
+use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowId};
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::window::{CursorGrabMode, Window, WindowId};
 
 use sunset_core::fixture;
+use sunset_core::intent::PlayerIntent;
+use sunset_core::player::{Player, PLAYER_EYE_HEIGHT, PLAYER_HEIGHT};
+use sunset_core::simulation::Simulation;
 
 use mesh::{MeshData, Vertex};
+
+/// Look sensitivity in radians per pixel of mouse motion.
+const SENSITIVITY: f32 = 0.0025;
+/// Fixed simulation tick (20 Hz), matching the Bevy adapter.
+const FIXED_DT: f32 = 1.0 / 20.0;
 
 /// A 4x4 view-projection matrix, updated once per frame.
 #[repr(C)]
@@ -384,15 +393,20 @@ fn create_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Te
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-/// The renderer state: surface/device plus the built world renderer.
+/// The renderer state: surface/device, the authoritative simulation, and input.
 struct State {
-    #[allow(dead_code)]
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     renderer: Option<Renderer>,
+    sim: Simulation,
+    intent: PlayerIntent,
+    cursor_captured: bool,
+    keys: HashSet<KeyCode>,
+    last_time: Instant,
+    accumulator: f32,
     frames: u64,
     last_log: Instant,
 }
@@ -462,25 +476,9 @@ impl State {
             &opaque,
         );
 
-        // Fixed M1 camera looking at the yard.
-        let eye = Vec3::new(8.0, 12.0, 28.0);
-        let center = Vec3::new(8.0, 4.0, 8.0);
-        let view = glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Y);
-        let aspect = config.width as f32 / config.height.max(1) as f32;
-        let proj = glam::camera::rh::proj::directx::perspective(
-            70.0_f32.to_radians(),
-            aspect,
-            0.1,
-            1000.0,
-        );
-        let uniform = CameraUniform {
-            view_proj: (proj * view).to_cols_array_2d(),
-        };
-        queue.write_buffer(
-            &renderer.uniform_buffer,
-            0,
-            bytemuck::cast_slice(std::slice::from_ref(&uniform)),
-        );
+        // Authoritative simulation, same spawn as the Bevy adapter.
+        let player = Player::new(Vec3::new(8.0, 5.5, 16.0), 0.5, -0.25);
+        let sim = Simulation::new(world, player);
 
         State {
             window,
@@ -489,6 +487,12 @@ impl State {
             queue,
             config,
             renderer: Some(renderer),
+            sim,
+            intent: PlayerIntent::default(),
+            cursor_captured: false,
+            keys: HashSet::new(),
+            last_time: Instant::now(),
+            accumulator: 0.0,
             frames: 0,
             last_log: Instant::now(),
         }
@@ -507,6 +511,55 @@ impl State {
     }
 
     fn render(&mut self) {
+        // Step the authoritative simulation at a fixed 20 Hz.
+        let now = Instant::now();
+        self.accumulator += (now - self.last_time).as_secs_f32().min(0.1);
+        self.last_time = now;
+        let mut move_axis = Vec2::ZERO;
+        if self.keys.contains(&KeyCode::KeyW) {
+            move_axis.y += 1.0;
+        }
+        if self.keys.contains(&KeyCode::KeyS) {
+            move_axis.y -= 1.0;
+        }
+        if self.keys.contains(&KeyCode::KeyD) {
+            move_axis.x += 1.0;
+        }
+        if self.keys.contains(&KeyCode::KeyA) {
+            move_axis.x -= 1.0;
+        }
+        self.intent.move_axis = move_axis.normalize_or_zero();
+        self.intent.jump = self.keys.contains(&KeyCode::Space);
+        while self.accumulator >= FIXED_DT {
+            self.sim.step(&self.intent, FIXED_DT);
+            self.accumulator -= FIXED_DT;
+        }
+
+        // Interpolate the camera between the previous and current fixed-tick
+        // positions for smooth motion.
+        let alpha = (self.accumulator / FIXED_DT).min(1.0);
+        let pos = self.sim.prev_pos.lerp(self.sim.player.pos, alpha);
+        let eye = pos + Vec3::new(0.0, PLAYER_EYE_HEIGHT - PLAYER_HEIGHT * 0.5, 0.0);
+        let rot = Quat::from_euler(
+            glam::EulerRot::ZYX,
+            0.0,
+            self.sim.player.yaw,
+            self.sim.player.pitch,
+        );
+        let forward = rot * Vec3::NEG_Z;
+        let up = rot * Vec3::Y;
+        let view = glam::camera::rh::view::look_to_mat4(eye, forward, up);
+        let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
+        let proj = glam::camera::rh::proj::directx::perspective(
+            70.0_f32.to_radians(),
+            aspect,
+            0.1,
+            1000.0,
+        );
+        let uniform = CameraUniform {
+            view_proj: (proj * view).to_cols_array_2d(),
+        };
+
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -515,11 +568,16 @@ impl State {
                 return;
             }
         };
-        let view = surface_texture
+        let view_tex = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         if let Some(r) = &self.renderer {
-            r.render(&self.device, &self.queue, &view);
+            self.queue.write_buffer(
+                &r.uniform_buffer,
+                0,
+                bytemuck::cast_slice(std::slice::from_ref(&uniform)),
+            );
+            r.render(&self.device, &self.queue, &view_tex);
         }
         self.queue.present(surface_texture);
 
@@ -541,10 +599,14 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window = Arc::new(
             event_loop
-                .create_window(Window::default_attributes().with_title("Sunset Raw — M1"))
+                .create_window(Window::default_attributes().with_title("Sunset Raw — M2"))
                 .unwrap(),
         );
-        let state = pollster::block_on(State::new(window));
+        let mut state = pollster::block_on(State::new(window));
+        // Capture the cursor so mouse-look works immediately.
+        let _ = state.window.set_cursor_grab(CursorGrabMode::Locked);
+        state.window.set_cursor_visible(false);
+        state.cursor_captured = true;
         self.state = Some(state);
     }
 
@@ -556,7 +618,50 @@ impl ApplicationHandler for App {
                     state.resize(size);
                 }
             }
+            WindowEvent::KeyboardInput { event, .. } => {
+                if let Some(state) = &mut self.state {
+                    if let PhysicalKey::Code(code) = event.physical_key {
+                        if event.state == ElementState::Pressed {
+                            state.keys.insert(code);
+                            if code == KeyCode::Escape && state.cursor_captured {
+                                state.cursor_captured = false;
+                                let _ = state.window.set_cursor_grab(CursorGrabMode::None);
+                                state.window.set_cursor_visible(true);
+                            }
+                        } else {
+                            state.keys.remove(&code);
+                        }
+                    }
+                }
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => {
+                if let Some(state) = &mut self.state {
+                    if !state.cursor_captured {
+                        let _ = state.window.set_cursor_grab(CursorGrabMode::Locked);
+                        state.window.set_cursor_visible(false);
+                        state.cursor_captured = true;
+                    }
+                }
+            }
             _ => {}
+        }
+    }
+
+    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
+        if let Some(state) = &mut self.state {
+            if let DeviceEvent::MouseMotion { delta } = event {
+                if state.cursor_captured {
+                    let half = std::f32::consts::FRAC_PI_2;
+                    state.sim.player.pitch =
+                        (state.sim.player.pitch - delta.1 as f32 * SENSITIVITY)
+                            .clamp(-half + 0.001, half - 0.001);
+                    state.sim.player.yaw -= delta.0 as f32 * SENSITIVITY;
+                }
+            }
         }
     }
 
