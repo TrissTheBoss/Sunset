@@ -1,7 +1,8 @@
 //! The local authoritative simulation: applies client intents to the world and
 //! player at a fixed tick, independent of rendering (PRD 4.3, 4.5).
 
-use crate::block::AIR;
+use crate::block::{block_def, AIR};
+use crate::block_entity::{tick_furnace, BlockEntity, Chest, Furnace};
 use crate::intent::{BlockAction, PlayerIntent};
 use crate::item::{block_drop, item_def, ItemStack};
 use crate::physics::{self, Aabb};
@@ -85,6 +86,18 @@ impl Simulation {
                         return;
                     }
                     self.world.set_block(pos[0], pos[1], pos[2], AIR);
+                    // A chest/furnace drops its stored contents when broken.
+                    if let Some(entity) = self.world.remove_block_entity(pos) {
+                        let contents: Vec<ItemStack> = match entity {
+                            BlockEntity::Chest(c) => c.items.to_vec(),
+                            BlockEntity::Furnace(f) => vec![f.fuel, f.input, f.output],
+                        };
+                        for s in contents {
+                            if !s.is_empty() {
+                                self.player.add_item(s.item, s.count);
+                            }
+                        }
+                    }
                     // Drop the block's item (respecting tool rules): stone
                     // needs a pickaxe and drops cobblestone.
                     let drop = block_drop(old);
@@ -104,6 +117,16 @@ impl Simulation {
                         return;
                     }
                     self.world.set_block(pos[0], pos[1], pos[2], block);
+                    // Furnaces and chests carry block-entity data.
+                    match block_def(block).id {
+                        "minecraft:furnace" => {
+                            self.world.set_block_entity(pos, BlockEntity::Furnace(Furnace::new()));
+                        }
+                        "minecraft:chest" => {
+                            self.world.set_block_entity(pos, BlockEntity::Chest(Chest::new()));
+                        }
+                        _ => {}
+                    }
                     // Consume one item from the selected slot.
                     let slot = &mut self.player.inventory[self.player.selected_slot];
                     slot.count -= 1;
@@ -111,6 +134,19 @@ impl Simulation {
                         *slot = ItemStack::EMPTY;
                     }
                 }
+            }
+        }
+
+        // Tick furnaces (one smelt step per tick).
+        let positions: Vec<[i32; 3]> = self
+            .world
+            .block_entities()
+            .filter(|(_, e)| matches!(e, BlockEntity::Furnace(_)))
+            .map(|(p, _)| *p)
+            .collect();
+        for pos in positions {
+            if let Some(BlockEntity::Furnace(f)) = self.world.get_block_entity_mut(pos) {
+                tick_furnace(f);
             }
         }
     }
@@ -332,5 +368,46 @@ mod tests {
             sim.world.get_block(8, 20, 16),
             state_by_id("minecraft:stone").unwrap()
         );
+    }
+
+    #[test]
+    fn furnace_smelts_and_roundtrips_through_save() {
+        let mut sim = Simulation::new(
+            World::new(),
+            Player::new(glam::Vec3::new(5.0, 5.0, 5.0), 0.0, 0.0),
+        );
+        sim.player.inventory[0] = ItemStack::new(item_by_id("minecraft:furnace").unwrap(), 1);
+        sim.player.inventory[1] = ItemStack::new(item_by_id("minecraft:oak_planks").unwrap(), 1);
+        sim.player.inventory[2] = ItemStack::new(item_by_id("minecraft:cobblestone").unwrap(), 1);
+        sim.player.selected_slot = 0;
+
+        sim.step(
+            &PlayerIntent {
+                block_action: Some(BlockAction::Place([0, 0, 0])),
+                ..Default::default()
+            },
+            DT,
+        );
+        let stone_item = item_by_id("minecraft:stone").unwrap();
+        {
+            let BlockEntity::Furnace(f) = sim.world.get_block_entity_mut([0, 0, 0]).unwrap() else {
+                panic!("expected a furnace entity");
+            };
+            f.fuel = ItemStack::new(item_by_id("minecraft:oak_planks").unwrap(), 1);
+            f.input = ItemStack::new(item_by_id("minecraft:cobblestone").unwrap(), 1);
+        }
+        sim.step(&PlayerIntent::default(), DT);
+
+        let BlockEntity::Furnace(f) = sim.world.get_block_entity([0, 0, 0]).unwrap() else {
+            panic!("furnace missing");
+        };
+        assert_eq!(f.output.item, stone_item, "furnace should have smelted stone");
+
+        let json = save::to_json(&sim.world, &sim.player);
+        let (w2, _) = save::from_json(&json).unwrap();
+        let BlockEntity::Furnace(f) = w2.get_block_entity([0, 0, 0]).unwrap() else {
+            panic!("furnace missing after reload");
+        };
+        assert_eq!(f.output.item, stone_item);
     }
 }

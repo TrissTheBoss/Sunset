@@ -5,12 +5,15 @@
 use std::collections::HashMap;
 
 use crate::block::{has_collision, BlockState, AIR};
+use crate::block_entity::BlockEntity;
 use crate::chunk::{Chunk, CHUNK_HEIGHT, CHUNK_SIZE};
 
 /// The authoritative block world.
 #[derive(Debug, Default)]
 pub struct World {
     chunks: HashMap<(i32, i32), Chunk>,
+    /// Block entities (furnaces, chests) keyed by block world coordinates.
+    block_entities: HashMap<[i32; 3], BlockEntity>,
 }
 
 impl World {
@@ -64,6 +67,31 @@ impl World {
     /// Out-of-range Y or a missing chunk has none.
     pub fn has_collision(&self, wx: i32, wy: i32, wz: i32) -> bool {
         has_collision(self.get_block(wx, wy, wz))
+    }
+
+    /// Store a block entity at world coordinates.
+    pub fn set_block_entity(&mut self, pos: [i32; 3], e: BlockEntity) {
+        self.block_entities.insert(pos, e);
+    }
+
+    /// Borrow a block entity at world coordinates, if present.
+    pub fn get_block_entity(&self, pos: [i32; 3]) -> Option<&BlockEntity> {
+        self.block_entities.get(&pos)
+    }
+
+    /// Borrow-mut a block entity at world coordinates, if present.
+    pub fn get_block_entity_mut(&mut self, pos: [i32; 3]) -> Option<&mut BlockEntity> {
+        self.block_entities.get_mut(&pos)
+    }
+
+    /// Remove and return the block entity at world coordinates, if present.
+    pub fn remove_block_entity(&mut self, pos: [i32; 3]) -> Option<BlockEntity> {
+        self.block_entities.remove(&pos)
+    }
+
+    /// Iterate over block entities (position, entity).
+    pub fn block_entities(&self) -> impl Iterator<Item = (&[i32; 3], &BlockEntity)> {
+        self.block_entities.iter()
     }
 }
 

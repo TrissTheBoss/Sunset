@@ -6,19 +6,30 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::block::{block_def, state_by_id, AIR};
+use crate::block_entity::{BlockEntity, Chest, Furnace, CHEST_SIZE};
 use crate::chunk::{CHUNK_HEIGHT, CHUNK_SIZE};
 use crate::item::{item_by_id, item_id, ItemStack, EMPTY_ITEM};
 use crate::player::Player;
 use crate::world::World;
 
 /// Current save schema version.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Serialize, Deserialize)]
 pub struct SaveData {
     pub schema_version: u32,
     pub player: PlayerSave,
     pub chunks: Vec<ChunkSave>,
+    pub block_entities: Vec<BlockEntitySave>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct BlockEntitySave {
+    pub pos: [i32; 3],
+    /// `"furnace"` or `"chest"`.
+    pub kind: String,
+    /// Entity slots as (item id, count).
+    pub items: Vec<ItemSave>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -99,6 +110,26 @@ pub fn to_json(world: &World, player: &Player) -> String {
                 .collect(),
         },
         chunks,
+        block_entities: world
+            .block_entities()
+            .map(|(pos, e)| {
+                let (kind, items) = match e {
+                    BlockEntity::Furnace(f) => ("furnace", vec![f.fuel, f.input, f.output]),
+                    BlockEntity::Chest(c) => ("chest", c.items.to_vec()),
+                };
+                BlockEntitySave {
+                    pos: *pos,
+                    kind: kind.to_string(),
+                    items: items
+                        .iter()
+                        .map(|s| ItemSave {
+                            id: item_id(s.item).unwrap_or("minecraft:air").to_string(),
+                            count: s.count,
+                        })
+                        .collect(),
+                }
+            })
+            .collect(),
     };
 
     serde_json::to_string_pretty(&data).expect("serialize save")
@@ -136,6 +167,36 @@ pub fn from_json(json: &str) -> Result<(World, Player), String> {
                 s,
             );
         }
+    }
+
+    for be in &data.block_entities {
+        let items: Vec<ItemStack> = be
+            .items
+            .iter()
+            .map(|is| ItemStack::new(item_by_id(&is.id).unwrap_or(EMPTY_ITEM), is.count))
+            .collect();
+        let entity = match be.kind.as_str() {
+            "furnace" => {
+                let mut f = Furnace::new();
+                if items.len() >= 3 {
+                    f.fuel = items[0];
+                    f.input = items[1];
+                    f.output = items[2];
+                }
+                BlockEntity::Furnace(f)
+            }
+            "chest" => {
+                let mut c = Chest::new();
+                for (i, s) in items.into_iter().enumerate() {
+                    if i < CHEST_SIZE {
+                        c.items[i] = s;
+                    }
+                }
+                BlockEntity::Chest(c)
+            }
+            _ => continue,
+        };
+        world.set_block_entity(be.pos, entity);
     }
 
     let p = &data.player;
