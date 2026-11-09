@@ -98,18 +98,31 @@ fn resolve(world: &World, aabb: &Aabb, pos: Vec3, axis: usize, dir: f32) -> f32 
                     continue;
                 };
                 let (ox, oy, oz) = (x as f32, y as f32, z as f32);
+                let bbmin = Vec3::new(bmin.x + ox, bmin.y + oy, bmin.z + oz);
+                let bbmax = Vec3::new(bmax.x + ox, bmax.y + oy, bmax.z + oz);
+                // Only consider blocks that actually overlap the entity on the
+                // other two axes. A block that merely shares a floor cell (e.g.
+                // a half slab beneath the feet) must not push the entity back.
+                let overlaps = match axis {
+                    0 => min.y < bbmax.y && max.y > bbmin.y && min.z < bbmax.z && max.z > bbmin.z,
+                    1 => min.x < bbmax.x && max.x > bbmin.x && min.z < bbmax.z && max.z > bbmin.z,
+                    _ => min.x < bbmax.x && max.x > bbmin.x && min.y < bbmax.y && max.y > bbmin.y,
+                };
+                if !overlaps {
+                    continue;
+                }
                 // The face of the block's box that the entity is pushing into.
                 let face = if dir > 0.0 {
                     match axis {
-                        0 => bmin.x + ox,
-                        1 => bmin.y + oy,
-                        _ => bmin.z + oz,
+                        0 => bbmin.x,
+                        1 => bbmin.y,
+                        _ => bbmin.z,
                     }
                 } else {
                     match axis {
-                        0 => bmax.x + ox,
-                        1 => bmax.y + oy,
-                        _ => bmax.z + oz,
+                        0 => bbmax.x,
+                        1 => bbmax.y,
+                        _ => bbmax.z,
                     }
                 };
                 best = Some(match best {
@@ -254,5 +267,37 @@ pub fn raycast(
             t_max_z += t_delta_z;
             face = [0, 0, -step_z];
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block::state_by_id;
+
+    #[test]
+    fn player_on_slab_is_not_pushed_back_through_wall() {
+        let slab = state_by_id("minecraft:smooth_stone_slab[type=bottom]").unwrap();
+        let stone = state_by_id("minecraft:stone").unwrap();
+        let mut world = World::new();
+        // Bottom slab at (0,0,0), full-cube wall at (1,0,0).
+        world.set_block(0, 0, 0, slab);
+        world.set_block(1, 0, 0, stone);
+
+        let aabb = Aabb {
+            half: Vec3::new(0.3, 0.9, 0.3),
+        };
+        // Standing on the slab (feet at y=0.5, centre at y=1.4), pushing +X into
+        // the wall.
+        let mut pos = Vec3::new(0.5, 1.4, 0.5);
+        let mut vel = Vec3::new(5.0, 0.0, 0.0);
+        move_entity(&world, &aabb, &mut pos, &mut vel, 0.05);
+
+        // The player must stop at the wall face (~0.7), not be pushed behind the
+        // slab (which would be x ≈ -0.3).
+        assert!(
+            pos.x > 0.5 && pos.x < 0.8,
+            "player shifted backwards through the slab: pos={pos:?}"
+        );
     }
 }
