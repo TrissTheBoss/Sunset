@@ -141,3 +141,60 @@ now measurable rather than speculative:
 > larger scenes, so absolute FPS is lower than a cool run; the earlier §2 M5
 > number of ~1473 FPS is a cool-GPU dev-build figure and is not directly
 > comparable). The *relative* scaling is the robust signal here.
+
+## 7. Optimized baseline (M12)
+
+**Date:** 2026-11-09 · **Build:** `--release` (all crates `opt-level = 3`,
+including Sunset's own). This supersedes the historical §2/§6 numbers for future
+comparisons.
+
+### 7.1 Environment
+
+| Field | Value |
+| --- | --- |
+| OS | Microsoft Windows 11 Education, 10.0.26200, 64-bit |
+| CPU | AMD Ryzen 5 5600X 6-core (12 threads, 3.7 GHz) |
+| GPU | AMD Radeon RX 6800 XT (driver 32.0.21045.16010) |
+| Backend | Vulkan (wgpu 30.0.1 default) |
+| Toolchain | rustc 1.99.1 (58cf8f9c3 2026-10-13) |
+| Build | `--release` (`[profile.release]`, no override) |
+| Display | 2560×1440 @ 165 Hz, windowed |
+| Presentation | `PresentMode::Immediate` (VSync off), `desired_maximum_frame_latency = 2` |
+| Fixture | `building-yard` (25 chunks, 448 opaque + 12 transparent triangles) |
+
+### 7.2 Method
+
+`bench_dense.ps1` runs the release binary with `SUNSET_BENCH_SECS=8` (2 s
+warm-up, then 8 s measured). `SUNSET_WORLD_RADIUS=N` generates deterministic
+rolling-hill terrain; `SUNSET_BENCH_SPIN` rotates the camera continuously
+(1 rad/s); `SUNSET_BENCH_EDIT` toggles a block every 30 frames. Frame-time
+collection and percentile sorting happen outside the measured GPU work.
+
+**Percentile definition:** `avg FPS` = frames ÷ total measured time. `0.1%-low
+FPS` = 1 ÷ (99.9th-percentile frame duration), i.e. the rate below which only
+0.1% of frames fall. These definitions are used consistently across §7; they are
+not comparable to a differently-defined statistic under the same label.
+
+### 7.3 Results
+
+| Scenario | avg FPS | 0.1%-low FPS | Notes |
+| --- | --- | --- | --- |
+| Stationary (fixture) | 1015.8 / 1012.4 / 1031.0 | 126.3 / 91.6 / 95.1 | 3 runs |
+| Camera spin (fixture) | 995.8 | 87.7 | continuous yaw rotation |
+| Edit burst (fixture) | 1167.0 | 86.1 | block toggle every 30 frames |
+| Dense stationary (radius 32) | 280.8 | 71.8 | 4 225 chunks, 2.43 M triangles |
+
+Transparent geometry is covered by the fixture's glass wall; the dense hilly
+world has no transparent blocks.
+
+### 7.4 Notes
+
+- The 0.1%-low values (~72–126 FPS) are dominated by the same periodic stall
+  noted in §4 (once-per-second console write and/or background-window
+  throttling), not scene rendering.
+- The dense radius-32 figure (280 FPS) is higher than the §6 sustained-load
+  number (210 FPS) because §7 includes M13 (the per-frame chunk-revision scan
+  and redundant uniform uploads are skipped) and was measured after a GPU
+  cooldown. §6 is retained only as a historical record.
+- CPU/GPU timing separation (timestamp queries) is not yet implemented; it
+  remains deferred per RAW_RENDERER_PLAN §16.1 ("where supported").

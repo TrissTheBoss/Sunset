@@ -42,13 +42,17 @@ const REACH: f32 = 5.0;
 const FRAME_WINDOW: usize = 1000;
 /// Warm-up seconds before benchmark frame times are recorded.
 const WARMUP_SECS: f32 = 2.0;
+/// Benchmark camera-spin rate (radians/second) when `SUNSET_BENCH_SPIN` is set.
+const BENCH_SPIN_RATE: f32 = 1.0;
+/// Frames between benchmark block edits when `SUNSET_BENCH_EDIT` is set.
+const BENCH_EDIT_INTERVAL: u64 = 30;
 /// Where the development save lives (a versioned `.sunset` file).
 const SAVE_PATH: &str = "saves/building-yard.sunset";
 
 /// Per-frame camera data: the world view-projection plus the outline's model
 /// matrix (the outline is a static unit cube scaled/translated per frame).
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 struct CameraUniform {
     view_proj: [[f32; 4]; 4],
     outline_model: [[f32; 4]; 4],
@@ -309,6 +313,8 @@ struct Renderer {
     line_pipeline: wgpu::RenderPipeline,
     line_vertex_buffer: wgpu::Buffer,
     chunks: HashMap<(i32, i32), GpuChunk>,
+    /// Reused across frames for transparent-chunk back-to-front sorting.
+    transparent_scratch: Vec<(i32, i32)>,
 }
 
 impl Renderer {
@@ -545,6 +551,7 @@ impl Renderer {
             line_pipeline,
             line_vertex_buffer,
             chunks: gpu_chunks,
+            transparent_scratch: Vec::new(),
         }
     }
 
@@ -553,7 +560,7 @@ impl Renderer {
     }
 
     fn render(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
@@ -640,22 +647,21 @@ impl Renderer {
             });
             pass.set_pipeline(&self.transparent_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            // Back-to-front (furthest first) for correct alpha blending.
-            let mut transparent: Vec<(i32, i32)> = self
-                .chunks
-                .keys()
-                .copied()
-                .filter(|&(cx, cz)| {
+            // Back-to-front (furthest first) for correct alpha blending. Reuse
+            // a scratch vector across frames to avoid a per-frame allocation.
+            self.transparent_scratch.clear();
+            let chunks = &self.chunks;
+            self.transparent_scratch
+                .extend(chunks.keys().copied().filter(|&(cx, cz)| {
                     frustum.intersects_chunk(cx, cz)
-                        && self.chunks[&(cx, cz)].transparent.index_count > 0
-                })
-                .collect();
-            transparent.sort_by(|&(ax, az), &(bx, bz)| {
+                        && chunks[&(cx, cz)].transparent.index_count > 0
+                }));
+            self.transparent_scratch.sort_by(|&(ax, az), &(bx, bz)| {
                 let da = chunk_dist_sq(eye, ax, az);
                 let db = chunk_dist_sq(eye, bx, bz);
                 db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
             });
-            for (cx, cz) in transparent {
+            for &(cx, cz) in &self.transparent_scratch {
                 let chunk = &self.chunks[&(cx, cz)];
                 pass.set_vertex_buffer(0, chunk.transparent.vertex_buffer.slice(..));
                 pass.set_index_buffer(
@@ -1013,6 +1019,13 @@ struct State {
     bench_times: Vec<f32>,
     /// Whether the window is currently fullscreen (toggled with F11).
     fullscreen: bool,
+    /// Last uploaded camera uniform, to skip redundant uploads (M13).
+    last_uniform: Option<CameraUniform>,
+    /// Benchmark scenario flags (M12 baseline).
+    bench_spin: bool,
+    bench_edit: bool,
+    bench_edit_tick: u64,
+    bench_edit_break: bool,
 }
 
 impl State {
@@ -1094,6 +1107,9 @@ impl State {
         let bench_secs = std::env::var("SUNSET_BENCH_SECS")
             .ok()
             .and_then(|s| s.parse::<f32>().ok());
+        // Benchmark scenarios: continuous camera spin and periodic block edits.
+        let bench_spin = std::env::var("SUNSET_BENCH_SPIN").is_ok();
+        let bench_edit = std::env::var("SUNSET_BENCH_EDIT").is_ok();
 
         State {
             window,
@@ -1121,6 +1137,11 @@ impl State {
             bench_start: None,
             bench_times: Vec::new(),
             fullscreen: false,
+            last_uniform: None,
+            bench_spin,
+            bench_edit,
+            bench_edit_tick: 0,
+            bench_edit_break: false,
         }
     }
 
@@ -1245,6 +1266,26 @@ impl State {
         } else {
             None
         };
+        // Benchmark-only scenarios (M12): continuous camera spin and periodic
+        // block edits, to cover movement and edit-burst workloads.
+        if self.bench_spin {
+            self.sim.player.yaw += BENCH_SPIN_RATE * dt;
+        }
+        if self.bench_edit {
+            self.bench_edit_tick += 1;
+            if self.bench_edit_tick >= BENCH_EDIT_INTERVAL {
+                self.bench_edit_tick = 0;
+                self.bench_edit_break = !self.bench_edit_break;
+                self.intent.block_action = Some(if self.bench_edit_break {
+                    BlockAction::Break([8, 4, 16])
+                } else {
+                    BlockAction::Place([8, 4, 16])
+                });
+            }
+        }
+        // Only a block action can mutate the world; note whether one was
+        // attempted so unchanged frames can skip the revision scan.
+        let world_may_have_changed = self.intent.block_action.is_some();
 
         while self.accumulator >= FIXED_DT {
             self.sim.step(&self.intent, FIXED_DT);
@@ -1253,8 +1294,11 @@ impl State {
         self.intent.block_action = None;
         self.intent.select_slot = None;
 
-        // Re-mesh only the chunks (and neighbours) that changed.
-        self.sync_meshes();
+        // Re-mesh only when an edit may have happened; avoid scanning every
+        // chunk revision on frames with no possible mutation (M13).
+        if world_may_have_changed {
+            self.sync_meshes();
+        }
 
         // Interpolate the camera between the previous and current fixed-tick
         // positions for smooth motion.
@@ -1292,12 +1336,17 @@ impl State {
         let view_tex = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        if let Some(r) = &self.renderer {
-            self.queue.write_buffer(
-                &r.uniform_buffer,
-                0,
-                bytemuck::cast_slice(std::slice::from_ref(&uniform)),
-            );
+        if let Some(r) = &mut self.renderer {
+            // Skip the upload when the uniform is unchanged and the destination
+            // buffer already holds valid data (M13).
+            if self.last_uniform != Some(uniform) {
+                self.queue.write_buffer(
+                    &r.uniform_buffer,
+                    0,
+                    bytemuck::cast_slice(std::slice::from_ref(&uniform)),
+                );
+                self.last_uniform = Some(uniform);
+            }
             r.render(
                 &self.device,
                 &self.queue,
