@@ -1,6 +1,6 @@
 # Raw wgpu Renderer — Plan
 
-**Status:** M0–M7 implemented and measured; M8+ planned (M8+ = optimizations).
+**Status:** M0–M10 implemented and measured; performance targets measured, not promised.
 **Date:** 2026-11-08 (amended to add core renderer optimizations).
 
 This plan describes a minimal, custom raw renderer that escapes the fixed
@@ -410,9 +410,14 @@ Bevy reference).
 - **M7 — Compact geometry + GPU arenas.** *Done.* Vertex packed 52 → 28 bytes
   (u16 fixed-point UV, RGBA8 color, u16 normalized atlas rect); decoded in the
   vertex shader. Quad-record reconstruction and GPU arenas remain deferred.
-- **M8 — Visibility + draw submission.** Section 11. Prereq: M6, M7.
-- **M9 — Transparency + shader efficiency.** Section 12. Prereq: M3.
-- **M10 — Resource reuse + backend efficiency.** Section 13. Prereq: M7, M8.
+- **M8 — Visibility + draw submission.** *Done.* Per-chunk frustum culling
+  (Gribb-Hartmann planes, conservative AABB test). Face buckets, batching,
+  cave-connectivity and depth occlusion remain deferred (dense-world case).
+- **M9 — Transparency + shader efficiency.** *Done.* Transparent chunks drawn
+  back-to-front by distance for correct alpha blending.
+- **M10 — Resource reuse + backend efficiency.** *Done.* Chunk meshes reuse
+  buffer capacity on edit instead of reallocating; pipelines/buffers are
+  already persistent across frames.
 
 **Sequencing rule:** always keep the simple low-overhead baseline runnable; the
 tiny fixture must not regress as scalability work lands. Advanced visibility

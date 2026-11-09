@@ -544,6 +544,7 @@ impl Renderer {
         view: &wgpu::TextureView,
         outline: bool,
         frustum: &Frustum,
+        eye: Vec3,
     ) {
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -624,18 +625,29 @@ impl Renderer {
             });
             pass.set_pipeline(&self.transparent_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            for (&(cx, cz), chunk) in &self.chunks {
-                if !frustum.intersects_chunk(cx, cz) {
-                    continue;
-                }
-                if chunk.transparent.index_count > 0 {
-                    pass.set_vertex_buffer(0, chunk.transparent.vertex_buffer.slice(..));
-                    pass.set_index_buffer(
-                        chunk.transparent.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    pass.draw_indexed(0..chunk.transparent.index_count, 0, 0..1);
-                }
+            // Back-to-front (furthest first) for correct alpha blending.
+            let mut transparent: Vec<(i32, i32)> = self
+                .chunks
+                .keys()
+                .copied()
+                .filter(|&(cx, cz)| {
+                    frustum.intersects_chunk(cx, cz)
+                        && self.chunks[&(cx, cz)].transparent.index_count > 0
+                })
+                .collect();
+            transparent.sort_by(|&(ax, az), &(bx, bz)| {
+                let da = chunk_dist_sq(eye, ax, az);
+                let db = chunk_dist_sq(eye, bx, bz);
+                db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            for (cx, cz) in transparent {
+                let chunk = &self.chunks[&(cx, cz)];
+                pass.set_vertex_buffer(0, chunk.transparent.vertex_buffer.slice(..));
+                pass.set_index_buffer(
+                    chunk.transparent.index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                pass.draw_indexed(0..chunk.transparent.index_count, 0, 0..1);
             }
         }
 
@@ -682,8 +694,19 @@ impl Renderer {
         cz: i32,
         mesh: &ChunkMesh,
     ) {
-        let opaque = create_mesh(device, queue, &mesh.opaque);
-        let transparent = create_mesh(device, queue, &mesh.transparent);
+        // Clone the existing buffer handles first so no borrow of `self.chunks`
+        // is held across the `insert` below.
+        let (ovb, oib, tvb, tib) = match self.chunks.get(&(cx, cz)) {
+            Some(c) => (
+                Some(c.opaque.vertex_buffer.clone()),
+                Some(c.opaque.index_buffer.clone()),
+                Some(c.transparent.vertex_buffer.clone()),
+                Some(c.transparent.index_buffer.clone()),
+            ),
+            None => (None, None, None, None),
+        };
+        let opaque = ensure_mesh(device, queue, ovb.as_ref(), oib.as_ref(), &mesh.opaque);
+        let transparent = ensure_mesh(device, queue, tvb.as_ref(), tib.as_ref(), &mesh.transparent);
         self.chunks
             .insert((cx, cz), GpuChunk { opaque, transparent });
     }
@@ -720,6 +743,35 @@ fn create_mesh(device: &wgpu::Device, queue: &wgpu::Queue, mesh: &MeshData) -> M
         index_buffer,
         index_count,
     }
+}
+
+/// Reuse an existing mesh's buffers when they have enough capacity, else create
+/// new ones. Writing new data in place avoids per-edit buffer reallocation.
+fn ensure_mesh(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    existing_vb: Option<&wgpu::Buffer>,
+    existing_ib: Option<&wgpu::Buffer>,
+    mesh: &MeshData,
+) -> Mesh {
+    let vbytes = (std::mem::size_of::<Vertex>() * mesh.vertices.len()) as u64;
+    let ibytes = (std::mem::size_of::<u32>() * mesh.indices.len()) as u64;
+    if let (Some(vb), Some(ib)) = (existing_vb, existing_ib) {
+        if vb.size() >= vbytes && ib.size() >= ibytes {
+            if !mesh.vertices.is_empty() {
+                queue.write_buffer(vb, 0, bytemuck::cast_slice(&mesh.vertices));
+            }
+            if !mesh.indices.is_empty() {
+                queue.write_buffer(ib, 0, bytemuck::cast_slice(&mesh.indices));
+            }
+            return Mesh {
+                vertex_buffer: vb.clone(),
+                index_buffer: ib.clone(),
+                index_count: mesh.indices.len() as u32,
+            };
+        }
+    }
+    create_mesh(device, queue, mesh)
 }
 
 /// Build a triangle-list render pipeline.
@@ -899,6 +951,17 @@ impl Frustum {
         }
         true
     }
+}
+
+/// Squared distance from the eye to a chunk's center.
+fn chunk_dist_sq(eye: Vec3, cx: i32, cz: i32) -> f32 {
+    let cx_f = (cx as f32 + 0.5) * CHUNK_SIZE as f32;
+    let cy_f = CHUNK_HEIGHT as f32 * 0.5;
+    let cz_f = (cz as f32 + 0.5) * CHUNK_SIZE as f32;
+    let dx = cx_f - eye.x;
+    let dy = cy_f - eye.y;
+    let dz = cz_f - eye.z;
+    dx * dx + dy * dy + dz * dz
 }
 
 /// The renderer state: surface/device, the authoritative simulation, and input.
@@ -1220,7 +1283,14 @@ impl State {
                 0,
                 bytemuck::cast_slice(std::slice::from_ref(&uniform)),
             );
-            r.render(&self.device, &self.queue, &view_tex, self.target.is_some(), &frustum);
+            r.render(
+                &self.device,
+                &self.queue,
+                &view_tex,
+                self.target.is_some(),
+                &frustum,
+                eye,
+            );
         }
         self.queue.present(surface_texture);
 
