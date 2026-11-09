@@ -1548,12 +1548,21 @@ impl State {
         });
         let edit_old = edit.map(|pos| self.sim.world.get_block(pos[0], pos[1], pos[2]));
 
+        let mut stepped = false;
         while self.accumulator >= FIXED_DT {
             self.sim.step(&self.intent, FIXED_DT);
             self.accumulator -= FIXED_DT;
+            stepped = true;
         }
+        // `block_action` is re-derived every frame from the held mouse buttons,
+        // so it is safe to clear unconditionally. `select_slot` is edge-triggered
+        // (set once on a key press / scroll), so it must persist until a tick
+        // actually consumes it — otherwise the selection is dropped whenever the
+        // 20 Hz tick does not land on the same frame as the input.
         self.intent.block_action = None;
-        self.intent.select_slot = None;
+        if stepped {
+            self.intent.select_slot = None;
+        }
 
         // Re-mesh only the chunks actually affected by the edit (M14).
         if let (Some(pos), Some(old)) = (edit, edit_old) {
@@ -1787,7 +1796,11 @@ impl ApplicationHandler for App {
                         let step = if y > 0.0 { -1 } else if y < 0.0 { 1 } else { 0 };
                         if step != 0 {
                             let n = sunset_core::player::HOTBAR_SIZE as i32;
-                            let cur = state.sim.player.selected_slot as i32;
+                            // Base the next slot on any pending selection so rapid
+                            // scrolls accumulate before the tick applies them.
+                            let cur =
+                                state.intent.select_slot.unwrap_or(state.sim.player.selected_slot)
+                                    as i32;
                             let next = (cur + step).rem_euclid(n);
                             state.intent.select_slot = Some(next as usize);
                         }

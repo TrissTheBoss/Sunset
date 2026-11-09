@@ -19,6 +19,10 @@ pub struct FaceTextures {
     pub end: Option<String>,
     pub front: Option<String>,
     pub particle: Option<String>,
+    /// Directional cube keys (used by `cube`-parented models like the crafting
+    /// table, which name faces `up`/`north`/`east`/… instead of `top`/`side`).
+    pub up: Option<String>,
+    pub north: Option<String>,
 }
 
 impl FaceTextures {
@@ -210,6 +214,8 @@ pub fn load_assets(
                     "end" => ft.end = Some(name.clone()),
                     "front" => ft.front = Some(name.clone()),
                     "particle" => ft.particle = Some(name.clone()),
+                    "up" => ft.up = Some(name.clone()),
+                    "north" => ft.north = Some(name.clone()),
                     _ => {}
                 }
                 if let std::collections::hash_map::Entry::Vacant(e) =
@@ -271,19 +277,101 @@ pub fn load_assets(
     })
 }
 
-/// Resolve a block item's icon texture name from its face textures. The chest's
-/// item form is its front-face texture (not a block face), so special-case it.
-fn block_item_icon(ft: &FaceTextures, id: &str) -> Option<String> {
-    if id == "minecraft:chest" {
-        return Some("entity/chest/normal".to_string());
+/// Decode a texture image by its name (e.g. `"block/stone"`), resized to 16×16.
+fn load_texture_image(
+    archive: &mut zip::ZipArchive<File>,
+    name: &str,
+) -> Option<image::RgbaImage> {
+    let bytes = read_jar_entry(archive, &texture_entry(name)).ok()?;
+    let img = image::load_from_memory(&bytes).ok()?.to_rgba8();
+    Some(ensure_16(&img))
+}
+
+/// Resize an image to 16×16 (nearest) if it is not already.
+fn ensure_16(img: &image::RgbaImage) -> image::RgbaImage {
+    if img.width() == 16 && img.height() == 16 {
+        img.clone()
+    } else {
+        image::imageops::resize(img, 16, 16, image::imageops::FilterType::Nearest)
     }
-    ft.all
+}
+
+/// Build an isometric "3D" block-item sprite from the block's top and side
+/// textures (a cube seen from an elevated 45° angle, like Minecraft's block
+/// items). The top face is unshaded, the front face is slightly shaded, and the
+/// side face is darker, so the sprite reads as three-dimensional.
+fn isometric_block_icon(top: &image::RgbaImage, side: &image::RgbaImage) -> image::RgbaImage {
+    let mut out = image::RgbaImage::new(16, 16);
+    // Top face (diamond): tex (0,0)->(8,0), (1,0)->(16,4), (0,1)->(0,4).
+    map_face(&mut out, (8.0, 0.0), (16.0, 4.0), (0.0, 4.0), top, 1.0);
+    // Front face (left parallelogram): (0,4), (8,8), (0,12).
+    map_face(&mut out, (0.0, 4.0), (8.0, 8.0), (0.0, 12.0), side, 0.8);
+    // Side face (right parallelogram): (8,8), (16,4), (8,16).
+    map_face(&mut out, (8.0, 8.0), (16.0, 4.0), (8.0, 16.0), side, 0.6);
+    out
+}
+
+/// Build a block item's isometric sprite from its resolved top + side textures.
+fn block_item_isometric(
+    archive: &mut zip::ZipArchive<File>,
+    ft: &FaceTextures,
+) -> Option<image::RgbaImage> {
+    let top_name = ft
+        .top
         .clone()
-        .or_else(|| ft.side.clone())
-        .or_else(|| ft.front.clone())
-        .or_else(|| ft.top.clone())
-        .or_else(|| ft.particle.clone())
+        .or_else(|| ft.up.clone())
         .or_else(|| ft.end.clone())
+        .or_else(|| ft.all.clone())?;
+    let side_name = ft
+        .side
+        .clone()
+        .or_else(|| ft.north.clone())
+        .or_else(|| ft.all.clone())?;
+    let top = load_texture_image(archive, &top_name)?;
+    let side = load_texture_image(archive, &side_name)?;
+    Some(isometric_block_icon(&top, &side))
+}
+
+/// Map a texture onto a parallelogram (defined by its three corners for tex
+/// (0,0), (1,0) and (0,1)) via an inverse affine transform, shading each texel
+/// by `shade`.
+fn map_face(
+    out: &mut image::RgbaImage,
+    p00: (f32, f32),
+    p10: (f32, f32),
+    p01: (f32, f32),
+    tex: &image::RgbaImage,
+    shade: f32,
+) {
+    let e0 = (p10.0 - p00.0, p10.1 - p00.1);
+    let e1 = (p01.0 - p00.0, p01.1 - p00.1);
+    let det = e0.0 * e1.1 - e0.1 * e1.0;
+    if det.abs() < 1e-6 {
+        return;
+    }
+    let tw = tex.width() as f32;
+    let th = tex.height() as f32;
+    for y in 0..out.height() {
+        for x in 0..out.width() {
+            let dx = x as f32 + 0.5 - p00.0;
+            let dy = y as f32 + 0.5 - p00.1;
+            let u = (dx * e1.1 - dy * e1.0) / det;
+            let v = (dy * e0.0 - dx * e0.1) / det;
+            if u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 {
+                continue;
+            }
+            let tx = (u * (tw - 1.0)).round() as u32;
+            let ty = (v * (th - 1.0)).round() as u32;
+            let p = *tex.get_pixel(tx, ty);
+            let shaded = image::Rgba([
+                (p[0] as f32 * shade) as u8,
+                (p[1] as f32 * shade) as u8,
+                (p[2] as f32 * shade) as u8,
+                p[3],
+            ]);
+            out.put_pixel(x, y, shaded);
+        }
+    }
 }
 
 /// The named GUI/container/font regions to pack into the UI atlas, each mapped
@@ -330,37 +418,37 @@ fn build_ui_atlas(
     let mut entries: Vec<(String, image::RgbaImage)> = Vec::new();
     let mut item_names: HashMap<Item, String> = HashMap::new();
 
-    // Item icons.
+    // Item icons. Block items get an isometric "3D" sprite (Minecraft renders
+    // block items as a cube from an elevated 45° angle); non-block items keep
+    // their flat sprite. The chest is an exception (flat front texture).
     for (item, def) in item_defs() {
         if def.id == "minecraft:air" {
             continue; // air has no item form
         }
-        let name = if def.id == "minecraft:chest" {
-            // The chest's item form is its front-face entity texture (its block
-            // model is a special tile-entity render, not a face-texture model).
-            Some("entity/chest/normal".to_string())
+        let (name, img): (String, image::RgbaImage) = if def.id == "minecraft:chest" {
+            let name = "entity/chest/normal".to_string();
+            let Some(img) = load_texture_image(archive, &name) else {
+                continue;
+            };
+            (name, img)
+        } else if let Some(state) = def.block {
+            let Some(ft) = face_textures.get(&state) else {
+                continue;
+            };
+            let Some(img) = block_item_isometric(archive, ft) else {
+                continue;
+            };
+            (format!("item3d:{}", def.id), img)
         } else {
-            match def.block {
-                Some(state) => face_textures
-                    .get(&state)
-                    .and_then(|ft| block_item_icon(ft, def.id)),
-                None => def
-                    .id
-                    .strip_prefix("minecraft:")
-                    .map(|s| format!("item/{s}")),
-            }
+            let Some(name) = def.id.strip_prefix("minecraft:").map(|s| format!("item/{s}"))
+            else {
+                continue;
+            };
+            let Some(img) = load_texture_image(archive, &name) else {
+                continue;
+            };
+            (name, img)
         };
-        let Some(name) = name else {
-            continue;
-        };
-        let entry = texture_entry(&name);
-        let Ok(bytes) = read_jar_entry(archive, &entry) else {
-            continue;
-        };
-        let Ok(img) = image::load_from_memory(&bytes) else {
-            continue;
-        };
-        let img = img.to_rgba8();
         // Dedupe: load each unique texture once, but remember every item's name.
         item_names.insert(item, name.clone());
         if !entries.iter().any(|(n, _)| n == &name) {
