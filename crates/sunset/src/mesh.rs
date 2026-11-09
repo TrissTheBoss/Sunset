@@ -307,7 +307,10 @@ fn face_visible(
         return true; // neighbour has no geometry
     }
     if is_transparent(state) {
-        !is_transparent(neighbor)
+        // Glass: a full-cube neighbour (opaque solid or glass) fully covers this
+        // face and hides it. A slab only partially covers it (in the vertical
+        // tangent direction), so the face stays visible.
+        block_def(neighbor).shape != Shape::FullCube
     } else {
         !occludes(neighbor)
     }
@@ -868,6 +871,23 @@ mod tests {
 
         assert!(opaque.indices.is_empty(), "glass is not opaque");
         assert_eq!(transparent.indices.len() / 3, 12, "glass exposes all 6 faces");
+    }
+
+    #[test]
+    fn glass_bottom_face_culled_on_solid_ground() {
+        let glass = state_by_id("minecraft:glass").expect("registered");
+        let stone = state_by_id("minecraft:stone").expect("registered");
+        let mut world = World::new();
+        world.set_block(0, 0, 0, stone); // solid ground
+        world.set_block(0, 1, 0, glass); // glass on top
+        let (_, transparent) = mesh_world(&world, 0, 0);
+
+        // The glass's bottom face (normal -Y at y=1) must not be emitted: it
+        // would z-fight with the solid block's top face below.
+        let glass_bottom = triangle_centroids(&transparent).iter().any(|&(c, n)| {
+            axis_of(n) == Some([0, -1, 0]) && (c[1] - 1.0).abs() < 0.01
+        });
+        assert!(!glass_bottom, "glass bottom face z-fights with solid ground");
     }
 
     #[test]
