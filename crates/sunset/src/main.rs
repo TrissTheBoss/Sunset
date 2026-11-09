@@ -20,6 +20,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
 use sunset_core::block::{block_def, BlockState};
+use sunset_core::chunk::{CHUNK_HEIGHT, CHUNK_SIZE};
 use sunset_core::fixture;
 use sunset_core::intent::{BlockAction, PlayerIntent};
 use sunset_core::physics;
@@ -536,7 +537,14 @@ impl Renderer {
         self.depth_view = create_depth_view(device, width, height);
     }
 
-    fn render(&self, device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView, outline: bool) {
+    fn render(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        outline: bool,
+        frustum: &Frustum,
+    ) {
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
@@ -572,7 +580,10 @@ impl Renderer {
             });
             pass.set_pipeline(&self.opaque_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            for chunk in self.chunks.values() {
+            for (&(cx, cz), chunk) in &self.chunks {
+                if !frustum.intersects_chunk(cx, cz) {
+                    continue;
+                }
                 if chunk.opaque.index_count > 0 {
                     pass.set_vertex_buffer(0, chunk.opaque.vertex_buffer.slice(..));
                     pass.set_index_buffer(
@@ -613,7 +624,10 @@ impl Renderer {
             });
             pass.set_pipeline(&self.transparent_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            for chunk in self.chunks.values() {
+            for (&(cx, cz), chunk) in &self.chunks {
+                if !frustum.intersects_chunk(cx, cz) {
+                    continue;
+                }
                 if chunk.transparent.index_count > 0 {
                     pass.set_vertex_buffer(0, chunk.transparent.vertex_buffer.slice(..));
                     pass.set_index_buffer(
@@ -827,6 +841,64 @@ fn outline_model_matrix(world: &World, pos: [i32; 3]) -> Option<[[f32; 4]; 4]> {
         Mat4::from_scale_rotation_translation(max - min, Quat::IDENTITY, min)
             .to_cols_array_2d(),
     )
+}
+
+/// The six clipping planes of a view frustum, extracted from a view-projection
+/// matrix (Gribb-Hartmann). Used to cull chunks entirely outside the view.
+struct Frustum {
+    /// `(a, b, c, d)` planes; a point `p` is inside when `a·p.x+b·p.y+c·p.z+d ≥ 0`.
+    planes: [[f32; 4]; 6],
+}
+
+impl Frustum {
+    fn from_matrix(m: &Mat4) -> Self {
+        let c = m.to_cols_array_2d();
+        // Rows of the matrix (glam is column-major, so transpose).
+        let row = |i: usize| [c[0][i], c[1][i], c[2][i], c[3][i]];
+        let r0 = row(0);
+        let r1 = row(1);
+        let r2 = row(2);
+        let r3 = row(3);
+        let add = |a: [f32; 4], b: [f32; 4]| [a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]];
+        let sub = |a: [f32; 4], b: [f32; 4]| [a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]];
+        // DirectX projection: near is z_clip ≥ 0 (row 2), far is z_clip ≤ w.
+        let mut planes = [add(r3, r0), sub(r3, r0), add(r3, r1), sub(r3, r1), r2, sub(r3, r2)];
+        for p in &mut planes {
+            let len = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+            if len > 0.0 {
+                p[0] /= len;
+                p[1] /= len;
+                p[2] /= len;
+                p[3] /= len;
+            }
+        }
+        Self { planes }
+    }
+
+    /// Whether a chunk's bounding box is at least partially inside the frustum.
+    fn intersects_chunk(&self, cx: i32, cz: i32) -> bool {
+        let min = [cx as f32 * CHUNK_SIZE as f32, 0.0, cz as f32 * CHUNK_SIZE as f32];
+        let max = [
+            (cx + 1) as f32 * CHUNK_SIZE as f32,
+            CHUNK_HEIGHT as f32,
+            (cz + 1) as f32 * CHUNK_SIZE as f32,
+        ];
+        self.intersects_aabb(min, max)
+    }
+
+    /// Conservative AABB test: `false` only when the box is entirely outside a
+    /// plane (the positive corner lies on the negative side).
+    fn intersects_aabb(&self, min: [f32; 3], max: [f32; 3]) -> bool {
+        for p in &self.planes {
+            let px = if p[0] >= 0.0 { max[0] } else { min[0] };
+            let py = if p[1] >= 0.0 { max[1] } else { min[1] };
+            let pz = if p[2] >= 0.0 { max[2] } else { min[2] };
+            if p[0] * px + p[1] * py + p[2] * pz + p[3] < 0.0 {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// The renderer state: surface/device, the authoritative simulation, and input.
@@ -1120,14 +1192,16 @@ impl State {
             0.1,
             1000.0,
         );
+        let vp = proj * view;
         let uniform = CameraUniform {
-            view_proj: (proj * view).to_cols_array_2d(),
+            view_proj: vp.to_cols_array_2d(),
             outline_model: match self.target {
                 Some((pos, _face)) => outline_model_matrix(&self.sim.world, pos)
                     .unwrap_or(Mat4::IDENTITY.to_cols_array_2d()),
                 None => Mat4::IDENTITY.to_cols_array_2d(),
             },
         };
+        let frustum = Frustum::from_matrix(&vp);
 
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
@@ -1146,7 +1220,7 @@ impl State {
                 0,
                 bytemuck::cast_slice(std::slice::from_ref(&uniform)),
             );
-            r.render(&self.device, &self.queue, &view_tex, self.target.is_some());
+            r.render(&self.device, &self.queue, &view_tex, self.target.is_some(), &frustum);
         }
         self.queue.present(surface_texture);
 
@@ -1301,6 +1375,31 @@ fn main() {
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App { state: None };
     event_loop.run_app(&mut app).expect("event loop error");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frustum_culls_invisible_chunks() {
+        let eye = Vec3::new(0.0, 0.0, 0.0);
+        let view = glam::camera::rh::view::look_to_mat4(eye, Vec3::NEG_Z, Vec3::Y);
+        let proj = glam::camera::rh::proj::directx::perspective(
+            70.0_f32.to_radians(),
+            1.0,
+            0.1,
+            1000.0,
+        );
+        let frustum = Frustum::from_matrix(&(proj * view));
+
+        // In front, on-axis: visible.
+        assert!(frustum.intersects_aabb([-8.0, 0.0, -108.0], [8.0, 64.0, -100.0]));
+        // Behind the camera: culled.
+        assert!(!frustum.intersects_aabb([-8.0, 0.0, 100.0], [8.0, 64.0, 108.0]));
+        // Far to the side (outside the 70° FOV): culled.
+        assert!(!frustum.intersects_aabb([1000.0, 0.0, -10.0], [1016.0, 64.0, 6.0]));
+    }
 }
 
 
