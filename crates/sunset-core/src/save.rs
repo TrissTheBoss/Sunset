@@ -9,7 +9,7 @@ use crate::block::{block_def, state_by_id, AIR};
 use crate::block_entity::{BlockEntity, Chest, Furnace, CHEST_SIZE};
 use crate::chunk::{CHUNK_HEIGHT, CHUNK_SIZE};
 use crate::item::{item_by_id, item_id, ItemStack, EMPTY_ITEM};
-use crate::player::Player;
+use crate::player::{Player, MAX_HEALTH};
 use crate::world::World;
 
 /// Current save schema version.
@@ -38,6 +38,7 @@ pub struct PlayerSave {
     pub yaw: f32,
     pub pitch: f32,
     pub selected_slot: usize,
+    pub health: f32,
     /// Inventory slots as (namespaced item id, count); empty slots are
     /// `minecraft:air` with count 0.
     pub inventory: Vec<ItemSave>,
@@ -92,6 +93,7 @@ pub fn to_json(world: &World, player: &Player) -> String {
             yaw: player.yaw,
             pitch: player.pitch,
             selected_slot: player.selected_slot,
+            health: player.health,
             inventory: player
                 .inventory
                 .iter()
@@ -208,6 +210,7 @@ pub fn from_json(json: &str) -> Result<(World, Player), String> {
     if p.selected_slot < player.inventory.len() {
         player.selected_slot = p.selected_slot;
     }
+    player.health = p.health.clamp(0.0, MAX_HEALTH);
     for (i, is) in p.inventory.iter().enumerate() {
         if i < player.inventory.len() {
             player.inventory[i] =

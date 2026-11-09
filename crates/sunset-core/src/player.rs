@@ -20,6 +20,10 @@ pub const HOTBAR_SIZE: usize = 9;
 pub const MAIN_SIZE: usize = 18;
 /// Total inventory slots.
 pub const INVENTORY_SIZE: usize = HOTBAR_SIZE + MAIN_SIZE;
+/// Maximum player health (20 = 10 hearts).
+pub const MAX_HEALTH: f32 = 20.0;
+/// Fall distance (in blocks) before fall damage begins.
+pub const FALL_DAMAGE_THRESHOLD: f32 = 3.0;
 
 /// Authoritative player state.
 #[derive(Debug, Clone)]
@@ -29,6 +33,12 @@ pub struct Player {
     pub yaw: f32,
     pub pitch: f32,
     pub on_ground: bool,
+    /// Current health (0..=MAX_HEALTH).
+    pub health: f32,
+    /// Distance fallen since leaving the ground, for fall damage.
+    pub fall_distance: f32,
+    /// Where the player respawns after death.
+    pub spawn_pos: Vec3,
     /// The inventory; the first [`HOTBAR_SIZE`] slots are the hotbar.
     pub inventory: [ItemStack; INVENTORY_SIZE],
     pub selected_slot: usize,
@@ -44,6 +54,9 @@ impl Player {
             yaw,
             pitch,
             on_ground: false,
+            health: MAX_HEALTH,
+            fall_distance: 0.0,
+            spawn_pos: pos,
             inventory: default_inventory(),
             selected_slot: 0,
             crafting: [ItemStack::EMPTY; 9],

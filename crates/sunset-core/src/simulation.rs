@@ -6,7 +6,10 @@ use crate::block_entity::{tick_furnace, BlockEntity, Chest, Furnace};
 use crate::intent::{BlockAction, PlayerIntent};
 use crate::item::{block_drop, item_def, ItemStack};
 use crate::physics::{self, Aabb};
-use crate::player::{Player, HOTBAR_SIZE, PLAYER_HALF_WIDTH, PLAYER_HEIGHT};
+use crate::player::{
+    Player, FALL_DAMAGE_THRESHOLD, HOTBAR_SIZE, INVENTORY_SIZE, MAX_HEALTH, PLAYER_HALF_WIDTH,
+    PLAYER_HEIGHT,
+};
 use crate::world::World;
 
 /// Downward acceleration (blocks/s^2).
@@ -69,6 +72,17 @@ impl Simulation {
             &mut self.player.vel,
             dt,
         );
+
+        // Fall damage: accumulate fall distance while airborne, apply on landing.
+        if self.player.on_ground {
+            let fall = self.player.fall_distance;
+            self.player.fall_distance = 0.0;
+            if fall > FALL_DAMAGE_THRESHOLD {
+                self.damage(fall - FALL_DAMAGE_THRESHOLD);
+            }
+        } else if self.player.vel.y < 0.0 {
+            self.player.fall_distance += -self.player.vel.y * dt;
+        }
 
         // Hotbar selection.
         if let Some(slot) = intent.select_slot {
@@ -149,6 +163,30 @@ impl Simulation {
                 tick_furnace(f);
             }
         }
+    }
+
+    /// Apply damage to the player, handling death and respawn.
+    pub fn damage(&mut self, amount: f32) {
+        self.player.health = (self.player.health - amount).max(0.0);
+        if self.player.health <= 0.0 {
+            self.die();
+        }
+    }
+
+    /// Drop the player's inventory and respawn at the spawn point.
+    fn die(&mut self) {
+        self.player.inventory = [ItemStack::EMPTY; INVENTORY_SIZE];
+        self.player.crafting = [ItemStack::EMPTY; 9];
+        self.respawn();
+    }
+
+    /// Reset the player to full health at the spawn point.
+    fn respawn(&mut self) {
+        self.player.pos = self.player.spawn_pos;
+        self.player.vel = glam::Vec3::ZERO;
+        self.player.health = MAX_HEALTH;
+        self.player.fall_distance = 0.0;
+        self.player.on_ground = false;
     }
 }
 
@@ -409,5 +447,46 @@ mod tests {
             panic!("furnace missing after reload");
         };
         assert_eq!(f.output.item, stone_item);
+    }
+
+    #[test]
+    fn fall_damage_reduces_health() {
+        let mut world = World::new();
+        let stone = state_by_id("minecraft:stone").unwrap();
+        for wx in -2..=2 {
+            for wz in -2..=2 {
+                world.set_block(wx, 0, wz, stone);
+            }
+        }
+        let mut sim = Simulation::new(
+            world,
+            Player::new(glam::Vec3::new(0.0, 7.9, 0.0), 0.0, 0.0),
+        );
+        for _ in 0..(20 * 4) {
+            sim.step(&PlayerIntent::default(), DT);
+        }
+        assert!(sim.player.on_ground);
+        assert!(
+            sim.player.health < MAX_HEALTH,
+            "a long fall should damage the player: health={}",
+            sim.player.health
+        );
+    }
+
+    #[test]
+    fn death_drops_inventory_and_respawns() {
+        let mut sim = Simulation::new(
+            World::new(),
+            Player::new(glam::Vec3::new(5.0, 10.0, 5.0), 0.0, 0.0),
+        );
+        let spawn = sim.player.spawn_pos;
+        sim.player.inventory[0] = ItemStack::new(item_by_id("minecraft:stone").unwrap(), 5);
+        sim.damage(100.0);
+        assert_eq!(sim.player.health, MAX_HEALTH, "respawned at full health");
+        assert_eq!(sim.player.pos, spawn, "respawned at the spawn point");
+        assert!(
+            sim.player.inventory.iter().all(|s| s.is_empty()),
+            "inventory dropped on death"
+        );
     }
 }

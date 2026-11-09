@@ -49,33 +49,55 @@
 
 ## Next playable increment
 
-- **M3 — First Survival progression** (PRD 5.2). First slice landed (items,
-  drops, inventory); remaining slices below.
+- **M3 — First Survival progression** (PRD 5.2). All five slices landed (items,
+  drops, inventory, crafting, tools, furnace, chest, health); see below. The
+  remaining work is a UI/HUD to drive the interactions, plus target-evidence
+  verification of exact rules.
 
 ### M3 progress (items, drops, inventory — first slice)
 
 - Introduced a durable item model (`sunset-core::item`): block items (one per
-  block state, placing that block) plus a `minecraft:stick` non-block item.
+  block state, placing that block) plus `minecraft:stick` and pickaxe items.
 - Added `ItemStack` (item + count, 64-stack limit) and a 27-slot inventory
   (9 hotbar + 18 main) on the player, replacing the block-only hotbar.
-- Breaking a block now drops its item into the inventory (stacking onto existing
-  stacks, then empty slots); placing a block consumes one item from the selected
-  hotbar slot.
-- Save schema bumped to v3: the inventory round-trips through `saves/*.sunset`
-  (namespaced item id + count per slot).
-- Headless tests cover block→item drops, place-consumes, item lookup, and save
-  round-trip.
+- Breaking a block drops its item into the inventory (stacking, then empty
+  slots); placing consumes one item from the selected hotbar slot.
+- Save schema v3: the inventory round-trips (namespaced id + count per slot).
 
-### Remaining M3 slices (not yet implemented)
+### M3 progress (crafting + tools)
 
-1. Crafting (planks, crafting table, wooden pickaxe) with verified recipes.
-2. Tool rules and mining (correct tool speed, stone tool).
-3. Furnace recipe/fuel/output transaction (with save/reopen).
-4. Chest storage (container, recover after reopen).
-5. Health, damage, death/respawn and drops loop.
+- Recipe registry with shaped 3×3 matching: log→4 planks, planks→crafting
+  table, planks→sticks, planks+sticks→wooden pickaxe, cobble+sticks→stone
+  pickaxe.
+- Player has a 3×3 crafting grid and a `craft()` transaction (consume inputs,
+  add output), persisted in the save.
+- Mining tool rules: stone requires a pickaxe and drops cobblestone; other
+  blocks drop their own item. New blocks: crafting table, furnace, chest.
 
-Inventory *manipulation* (moving items between slots) still needs a UI; selecting
-a hotbar slot and placing is the only interaction so far.
+### M3 progress (furnace + chest)
+
+- Block entities (furnace, chest) stored in the world by block coordinates.
+- Furnace smelts one item per tick (cobblestone→stone, sand→glass) using fuel
+  (planks/logs); chest stores 27 items.
+- Placing creates the entity; breaking drops its contents then the block item.
+- Save schema v4 serializes block entities.
+
+### M3 progress (health, damage, death, drops)
+
+- Player health (max 20), fall damage (accumulated fall distance), death and
+  respawn at the spawn point.
+- On death the inventory and crafting grid are dropped (cleared) and health
+  resets. Health persists in the save.
+
+### Remaining / not yet implemented
+
+- A UI/HUD to drive crafting, furnace and chest interaction (currently the
+  authoritative logic is headless-tested; the only in-game interaction is
+  hotbar selection + break/place).
+- Item *entities* (dropped items lying in the world to pick up) — drops go
+  straight into the inventory.
+- Tool durability, exact mining speed/break timing, and verified target drop
+  tables (require the exact Java Edition 26.3 artifacts).
 
 ## Blockers
 
