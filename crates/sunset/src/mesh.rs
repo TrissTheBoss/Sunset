@@ -68,6 +68,42 @@ impl FaceTable {
     }
 }
 
+/// A chunk plus a 1-block halo of neighbouring blocks, so face-visibility
+/// lookups never cross into a `World` HashMap (M16). The word-parallel mesher
+/// reads occupancy from here instead of calling `World::get_block` per cell.
+pub struct ChunkSnapshot {
+    /// Block states, dims `(CHUNK_SIZE+2) x (CHUNK_HEIGHT+2) x (CHUNK_SIZE+2)`,
+    /// indexed `[x+1][y+1][z+1]` (y-major, matching `Chunk`).
+    blocks: Box<[BlockState]>,
+}
+
+impl ChunkSnapshot {
+    const DIM: usize = CHUNK_SIZE + 2;
+    const HEIGHT: usize = CHUNK_HEIGHT + 2;
+
+    pub fn gather(world: &World, chunk: &Chunk) -> Self {
+        let mut blocks = vec![AIR; Self::DIM * Self::DIM * Self::HEIGHT].into_boxed_slice();
+        let base_x = chunk.cx * CHUNK_SIZE as i32;
+        let base_z = chunk.cz * CHUNK_SIZE as i32;
+        for y in -1..=CHUNK_HEIGHT as i32 {
+            for z in -1..=CHUNK_SIZE as i32 {
+                for x in -1..=CHUNK_SIZE as i32 {
+                    let idx =
+                        ((y + 1) as usize * Self::DIM + (z + 1) as usize) * Self::DIM + (x + 1) as usize;
+                    blocks[idx] = world.get_block(base_x + x, y, base_z + z);
+                }
+            }
+        }
+        Self { blocks }
+    }
+
+    #[inline]
+    pub fn get(&self, x: i32, y: i32, z: i32) -> BlockState {
+        let idx = ((y + 1) as usize * Self::DIM + (z + 1) as usize) * Self::DIM + (x + 1) as usize;
+        self.blocks[idx]
+    }
+}
+
 /// A single interleaved vertex: position, tiled UV, face shade/color, and the
 /// texture's atlas rect (wrapped by `fract` in the fragment shader so merged
 /// rectangles tile instead of stretch).
@@ -312,7 +348,9 @@ fn greedy_face(
                     continue;
                 }
                 let def = block_def(state);
-                if def.shape != Shape::FullCube {
+                // Opaque full cubes are meshed word-parallel (M16); this path
+                // handles transparent full cubes (glass) only.
+                if def.shape != Shape::FullCube || !is_transparent(state) {
                     continue;
                 }
                 let neighbor = world.get_block(
@@ -401,6 +439,132 @@ fn greedy_face(
     }
 }
 
+/// Word-parallel meshing of opaque full-cube faces (M16): build `u32`
+/// occupancy rows, derive exposed faces with integer AND/NOT, then greedily
+/// merge by material. Transparent full cubes (glass) and slabs use the
+/// shape-aware path.
+#[allow(clippy::too_many_arguments)]
+fn greedy_opaque_face(
+    snapshot: &ChunkSnapshot,
+    face_table: &FaceTable,
+    base_x: i32,
+    base_z: i32,
+    face: usize,
+    opaque: &mut MeshData,
+) {
+    let (na, ta, tb) = FACE_AXES[face];
+    let n_dim = if na == 1 { CHUNK_HEIGHT } else { CHUNK_SIZE };
+    let a_dim = if ta == 1 { CHUNK_HEIGHT } else { CHUNK_SIZE };
+    let b_dim = if tb == 1 { CHUNK_HEIGHT } else { CHUNK_SIZE };
+    let dir = FACE_NORMALS[face][na];
+
+    // Occupancy rows: occ[plane+1][b] = u32, bit `a` = opaque full cube at the
+    // cell (na=plane, ta=a, tb=b). A halo plane on each side makes boundary
+    // exposure (a neighbour across the chunk edge) read as air.
+    let mut occ: Vec<Vec<u32>> = vec![vec![0u32; b_dim]; n_dim + 2];
+    for p in -1..=(n_dim as i32) {
+        let plane_rows = &mut occ[(p + 1) as usize];
+        for (b, slot) in plane_rows.iter_mut().enumerate() {
+            let mut row = 0u32;
+            for a in 0..a_dim {
+                let mut c = [0i32; 3];
+                c[na] = p;
+                c[ta] = a as i32;
+                c[tb] = b as i32;
+                if occludes(snapshot.get(c[0], c[1], c[2])) {
+                    row |= 1 << a;
+                }
+            }
+            *slot = row;
+        }
+    }
+
+    // Read the block state at a cell in this face's (na, ta, tb) frame.
+    let cell = |plane: i32, a: i32, b: i32| -> BlockState {
+        let mut c = [0i32; 3];
+        c[na] = plane;
+        c[ta] = a;
+        c[tb] = b;
+        snapshot.get(c[0], c[1], c[2])
+    };
+
+    for plane in 0..n_dim {
+        let cur = plane + 1;
+        let neighbor = (plane as i32 + dir + 1) as usize;
+
+        // Exposed faces: occ[cur] AND NOT occ[neighbour].
+        let exposed: Vec<u32> = occ[cur]
+            .iter()
+            .zip(&occ[neighbor])
+            .map(|(&c, &n)| c & !n)
+            .collect();
+
+        let mut visited = vec![false; a_dim * b_dim];
+        for b in 0..b_dim {
+            for a in 0..a_dim {
+                let idx = b * a_dim + a;
+                if visited[idx] || exposed[b] & (1 << a) == 0 {
+                    continue;
+                }
+                let state = cell(plane as i32, a as i32, b as i32);
+
+                let mut w = 1;
+                while a + w < a_dim
+                    && !visited[b * a_dim + (a + w)]
+                    && exposed[b] & (1 << (a + w)) != 0
+                    && cell(plane as i32, (a + w) as i32, b as i32) == state
+                {
+                    w += 1;
+                }
+                let mut h = 1;
+                'grow: while b + h < b_dim {
+                    for da in 0..w {
+                        let aa = a + da;
+                        if visited[(b + h) * a_dim + aa]
+                            || exposed[b + h] & (1 << aa) == 0
+                            || cell(plane as i32, aa as i32, (b + h) as i32) != state
+                        {
+                            break 'grow;
+                        }
+                    }
+                    h += 1;
+                }
+                for db in 0..h {
+                    for da in 0..w {
+                        visited[(b + db) * a_dim + (a + da)] = true;
+                    }
+                }
+
+                let n_coord = plane as f32 + if dir > 0 { 1.0 } else { 0.0 };
+                let mut mn = [0.0f32; 3];
+                let mut mx = [0.0f32; 3];
+                mn[na] = n_coord;
+                mx[na] = n_coord;
+                mn[ta] = a as f32;
+                mx[ta] = (a + w) as f32;
+                mn[tb] = b as f32;
+                mx[tb] = (b + h) as f32;
+                mn[0] += base_x as f32;
+                mn[2] += base_z as f32;
+                mx[0] += base_x as f32;
+                mx[2] += base_z as f32;
+                let corners = face_corners(Vec3::from_array(mn), Vec3::from_array(mx), face);
+
+                let desc = face_table.get(state, face);
+                if let Some(rect) = desc.rect {
+                    let uvs = [0usize, 1, 2, 3].map(|i| {
+                        let [u, v] = FACE_UVS[face][i];
+                        [u * w as f32, v * h as f32]
+                    });
+                    opaque.add_face(corners, uvs, desc.color, rect);
+                } else {
+                    opaque.add_face(corners, [[0.0, 0.0]; 4], desc.color, [0.0, 0.0, 1.0, 1.0]);
+                }
+            }
+        }
+    }
+}
+
 /// Build the opaque and transparent meshes for one chunk (world-space positions).
 pub fn build_chunk_meshes(
     world: &World,
@@ -412,9 +576,11 @@ pub fn build_chunk_meshes(
 
     let base_x = chunk.cx * CHUNK_SIZE as i32;
     let base_z = chunk.cz * CHUNK_SIZE as i32;
+    let snapshot = ChunkSnapshot::gather(world, chunk);
 
-    // Greedy-mesh full cubes.
+    // Full cubes: opaque word-parallel (M16), then glass per-cell.
     for face in 0..6 {
+        greedy_opaque_face(&snapshot, face_table, base_x, base_z, face, &mut opaque);
         greedy_face(
             world,
             chunk,
