@@ -303,27 +303,49 @@ fn ensure_16(img: &image::RgbaImage) -> image::RgbaImage {
 fn isometric_block_icon(
     top: &image::RgbaImage,
     side: &image::RgbaImage,
-    half_height: bool,
+    is_slab: bool,
 ) -> image::RgbaImage {
-    let mut out = image::RgbaImage::new(16, 16);
-    // Shift the cube by -0.5 so its edges land on pixel boundaries instead of
-    // being clipped 1px on the right/bottom.
-    // Top face (diamond): tex (0,0)->(7.5,-0.5), (1,0)->(15.5,3.5), (0,1)->(-0.5,3.5).
-    map_face(&mut out, (7.5, -0.5), (15.5, 3.5), (-0.5, 3.5), top, 1.0);
-    // Front face (left parallelogram), full or half height.
-    let front_bottom = if half_height { 7.5 } else { 11.5 };
-    map_face(&mut out, (-0.5, 3.5), (7.5, 7.5), (-0.5, front_bottom), side, 0.8);
-    // Side face (right parallelogram), full or half height.
-    let side_bottom = if half_height { 11.5 } else { 15.5 };
-    map_face(&mut out, (7.5, 7.5), (15.5, 3.5), (7.5, side_bottom), side, 0.6);
+    // Render at 32×32 (higher-res than the 16px flat items) so the diagonal
+    // edges are smoother. Coordinates are the original 16×16 geometry scaled by
+    // 2, shifted by -0.5 so the cube's edges land on pixel boundaries.
+    const S: f32 = 32.0;
+    let mut out = image::RgbaImage::new(S as u32, S as u32);
+    let c = S / 16.0;
+    if is_slab {
+        // Bottom slab: the top face sits at the block's vertical middle and the
+        // body runs down to the bottom (matching vanilla's default bottom slab).
+        map_face(&mut out, (7.5 * c, 3.5 * c), (15.5 * c, 7.5 * c), (-0.5 * c, 7.5 * c), top, 1.0);
+        map_face(&mut out, (-0.5 * c, 7.5 * c), (7.5 * c, 11.5 * c), (-0.5 * c, 11.5 * c), side, 0.8);
+        map_face(&mut out, (7.5 * c, 11.5 * c), (15.5 * c, 7.5 * c), (7.5 * c, 15.5 * c), side, 0.6);
+    } else {
+        // Full cube: top face at the top, full-height body.
+        map_face(&mut out, (7.5 * c, -0.5 * c), (15.5 * c, 3.5 * c), (-0.5 * c, 3.5 * c), top, 1.0);
+        map_face(&mut out, (-0.5 * c, 3.5 * c), (7.5 * c, 7.5 * c), (-0.5 * c, 11.5 * c), side, 0.8);
+        map_face(&mut out, (7.5 * c, 7.5 * c), (15.5 * c, 3.5 * c), (7.5 * c, 15.5 * c), side, 0.6);
+    }
     out
+}
+
+/// Tint an image toward the plains-biome grass green (Minecraft applies a biome
+/// grass colour to `grass_block_top`, which is otherwise a desaturated grey).
+fn tint_grass_green(img: &mut image::RgbaImage) {
+    // Plains grass colour, approximate.
+    const GR: f32 = 0.569;
+    const GG: f32 = 0.741;
+    const GB: f32 = 0.349;
+    for p in img.pixels_mut() {
+        p[0] = (p[0] as f32 * GR) as u8;
+        p[1] = (p[1] as f32 * GG) as u8;
+        p[2] = (p[2] as f32 * GB) as u8;
+    }
 }
 
 /// Build a block item's isometric sprite from its resolved top + side textures.
 fn block_item_isometric(
     archive: &mut zip::ZipArchive<File>,
     ft: &FaceTextures,
-    half_height: bool,
+    is_slab: bool,
+    id: &str,
 ) -> Option<image::RgbaImage> {
     let top_name = ft
         .top
@@ -336,9 +358,12 @@ fn block_item_isometric(
         .clone()
         .or_else(|| ft.north.clone())
         .or_else(|| ft.all.clone())?;
-    let top = load_texture_image(archive, &top_name)?;
+    let mut top = load_texture_image(archive, &top_name)?;
     let side = load_texture_image(archive, &side_name)?;
-    Some(isometric_block_icon(&top, &side, half_height))
+    if id == "minecraft:grass_block" {
+        tint_grass_green(&mut top);
+    }
+    Some(isometric_block_icon(&top, &side, is_slab))
 }
 
 /// Map a texture onto a parallelogram (defined by its three corners for tex
@@ -444,11 +469,11 @@ fn build_ui_atlas(
             let Some(ft) = face_textures.get(&state) else {
                 continue;
             };
-            let half_height = matches!(
+            let is_slab = matches!(
                 sunset_core::block::block_def(state).shape,
                 sunset_core::block::Shape::SlabBottom | sunset_core::block::Shape::SlabTop
             );
-            let Some(img) = block_item_isometric(archive, ft, half_height) else {
+            let Some(img) = block_item_isometric(archive, ft, is_slab, def.id) else {
                 continue;
             };
             (format!("item3d:{}", def.id), img)
@@ -518,9 +543,6 @@ fn pack_atlas(
     entries: Vec<(String, image::RgbaImage)>,
 ) -> (image::RgbaImage, HashMap<String, [f32; 4]>) {
     const MAX_W: u32 = 1024;
-    /// 1px transparent gap between regions so linear filtering does not bleed
-    /// across region boundaries (the atlas edges are handled by ClampToEdge).
-    const PAD: u32 = 1;
 
     let mut order: Vec<usize> = (0..entries.len()).collect();
     order.sort_by_key(|&i| std::cmp::Reverse(entries[i].1.height()));
@@ -538,15 +560,15 @@ fn pack_atlas(
         if iw > MAX_W {
             continue;
         }
-        if x > 0 && x + iw > MAX_W {
+        if x + iw > MAX_W {
             x = 0;
-            y += row_h + PAD;
+            y += row_h;
             row_h = 0;
         }
         placed.push((i, x, y));
-        x += iw + PAD;
+        x += iw;
         row_h = row_h.max(ih);
-        w = w.max(x.saturating_sub(PAD));
+        w = w.max(x);
         h = h.max(y + row_h);
     }
 
