@@ -1031,6 +1031,8 @@ struct State {
     cursor: ItemStack,
     /// Last frame's slot positions (screen px), for click hit-testing.
     slots: Vec<(f32, f32)>,
+    /// The pause menu's button rects `(x, y, w, h)`, for click hit-testing.
+    pause_buttons: Vec<(f32, f32, f32, f32)>,
     /// Cursor position in physical screen pixels (for UI hit-testing).
     mouse_pos: (f32, f32),
     /// Set when a widget requests quitting; exits the event loop next frame.
@@ -1172,6 +1174,7 @@ impl State {
             screen_pos: None,
             cursor: ItemStack::EMPTY,
             slots: Vec::new(),
+            pause_buttons: Vec::new(),
             mouse_pos: (0.0, 0.0),
             quit: false,
         }
@@ -1366,43 +1369,52 @@ impl State {
         let assets = self.ui_assets.as_ref()?;
         let screen = (self.config.width, self.config.height);
         let mut b = ui::UiBuilder::new();
-        if self.screen == ui::Screen::None {
-            ui::draw_hud(
-                &mut b,
-                assets,
-                &self.sim.player.inventory,
-                self.sim.player.selected_slot,
-                self.sim.player.health,
-                screen,
-            );
-        } else {
-            b.solid(
-                assets,
-                0.0,
-                0.0,
-                screen.0 as f32,
-                screen.1 as f32,
-                ui::pack_rgba(0, 0, 0, 120),
-            );
-            let layout = self.current_layout();
-            let top = self.top_stacks();
-            self.slots =
-                ui::draw_container_screen(&mut b, assets, layout, &top, &self.sim.player, screen);
-            if !self.cursor.is_empty() {
-                let s = ui::gui_scale(screen.0, screen.1) as f32;
-                let size = 16.0 * s;
-                ui::draw_item_icon(
+        match self.screen {
+            ui::Screen::None => {
+                ui::draw_hud(
                     &mut b,
                     assets,
-                    self.mouse_pos.0 - size / 2.0,
-                    self.mouse_pos.1 - size / 2.0,
-                    size,
-                    self.cursor.item,
+                    &self.sim.player.inventory,
+                    self.sim.player.selected_slot,
+                    self.sim.player.health,
+                    screen,
                 );
             }
+            ui::Screen::Pause => {
+                self.pause_buttons = ui::draw_pause_screen(&mut b, assets, screen);
+            }
+            _ => {
+                b.solid(
+                    assets,
+                    0.0,
+                    0.0,
+                    screen.0 as f32,
+                    screen.1 as f32,
+                    ui::pack_rgba(0, 0, 0, 120),
+                );
+                let layout = self.current_layout();
+                let top = self.top_stacks();
+                self.slots =
+                    ui::draw_container_screen(&mut b, assets, layout, &top, &self.sim.player, screen);
+                if !self.cursor.is_empty() {
+                    let s = ui::gui_scale(screen.0, screen.1) as f32;
+                    let size = 16.0 * s;
+                    ui::draw_item_icon(
+                        &mut b,
+                        assets,
+                        self.mouse_pos.0 - size / 2.0,
+                        self.mouse_pos.1 - size / 2.0,
+                        size,
+                        self.cursor.item,
+                    );
+                }
+            }
         }
-        // Registered widgets (buttons etc.) draw on top of the HUD and screens.
-        widgets::draw_widgets(&mut b, assets, screen, self.mouse_pos);
+        // Registered widgets draw on top of the HUD and screens (but not the
+        // pause menu, so the demo buttons don't overlap it).
+        if self.screen != ui::Screen::Pause {
+            widgets::draw_widgets(&mut b, assets, screen, self.mouse_pos);
+        }
         Some(b)
     }
 
@@ -1417,6 +1429,21 @@ impl State {
                 return;
             }
         }
+    }
+
+    /// Handle a left-click on the pause menu, returning whether a button was hit.
+    fn pause_click(&mut self) -> bool {
+        let (mx, my) = self.mouse_pos;
+        for (i, &(bx, by, bw, bh)) in self.pause_buttons.iter().enumerate() {
+            if mx >= bx && mx < bx + bw && my >= by && my < by + bh {
+                match i {
+                    0 => self.close_screen(), // Back to Game
+                    _ => self.quit = true,    // Quit Game
+                }
+                return true;
+            }
+        }
+        false
     }
 
     fn try_open_container(&mut self) {
@@ -1564,10 +1591,15 @@ impl State {
             self.intent.select_slot = None;
         }
 
-        // Re-mesh only the chunks actually affected by the edit (M14).
+        // Re-mesh only the chunks actually affected by the edit (M14), and only
+        // when the block actually changed — holding a mouse button re-issues the
+        // action every frame, and remeshing an unchanged chunk each frame causes
+        // placement lag spikes.
         if let (Some(pos), Some(old)) = (edit, edit_old) {
             let new = self.sim.world.get_block(pos[0], pos[1], pos[2]);
-            self.apply_edit(pos, old, new);
+            if old != new {
+                self.apply_edit(pos, old, new);
+            }
         }
 
         // Interpolate the camera between the previous and current fixed-tick
@@ -1703,22 +1735,24 @@ impl ApplicationHandler for App {
                             state.keys.insert(code);
                             if code == KeyCode::Escape {
                                 if state.screen != ui::Screen::None {
+                                    // Close any screen (including the pause menu).
                                     state.close_screen();
                                 } else if state.cursor_captured {
-                                    state.cursor_captured = false;
-                                    let _ = state.window.set_cursor_grab(CursorGrabMode::None);
-                                    state.window.set_cursor_visible(true);
+                                    // Open the pause menu.
+                                    state.open_screen(ui::Screen::Pause, None);
                                 }
                             }
                             if code == KeyCode::KeyE {
                                 if state.screen == ui::Screen::None {
                                     state.open_screen(ui::Screen::Inventory, None);
-                                } else {
+                                } else if state.screen == ui::Screen::Inventory {
                                     state.close_screen();
                                 }
                             }
-                            if let Some(slot) = digit_slot(code) {
-                                state.intent.select_slot = Some(slot);
+                            if state.screen == ui::Screen::None {
+                                if let Some(slot) = digit_slot(code) {
+                                    state.intent.select_slot = Some(slot);
+                                }
                             }
                             if code == KeyCode::F5 {
                                 let json = save::to_json(&state.sim.world, &state.sim.player);
@@ -1749,32 +1783,40 @@ impl ApplicationHandler for App {
                 if let Some(state) = &mut self.state {
                     match button_state {
                         ElementState::Pressed => {
-                            let mut handled = false;
-                            if button == MouseButton::Left {
-                                let screen = (state.config.width, state.config.height);
-                                if let Some(i) =
-                                    widgets::hit_widget(state.mouse_pos.0, state.mouse_pos.1, screen)
-                                {
-                                    let mut ctx = widgets::UiContext::default();
-                                    widgets::click_widget(i, &mut ctx);
-                                    state.apply_ui_context(ctx);
-                                    handled = true;
+                            if state.screen == ui::Screen::Pause {
+                                if button == MouseButton::Left {
+                                    state.pause_click();
                                 }
-                            }
-                            if !handled {
-                                if state.screen != ui::Screen::None {
-                                    let click = match button {
-                                        MouseButton::Left => Some(ui::Click::Left),
-                                        MouseButton::Right => Some(ui::Click::Right),
-                                        _ => None,
-                                    };
-                                    if let Some(click) = click {
-                                        state.click_slot_at(click);
+                            } else {
+                                let mut handled = false;
+                                if button == MouseButton::Left {
+                                    let screen = (state.config.width, state.config.height);
+                                    if let Some(i) = widgets::hit_widget(
+                                        state.mouse_pos.0,
+                                        state.mouse_pos.1,
+                                        screen,
+                                    ) {
+                                        let mut ctx = widgets::UiContext::default();
+                                        widgets::click_widget(i, &mut ctx);
+                                        state.apply_ui_context(ctx);
+                                        handled = true;
                                     }
-                                } else {
-                                    state.mouse_buttons.insert(button);
-                                    if button == MouseButton::Right {
-                                        state.try_open_container();
+                                }
+                                if !handled {
+                                    if state.screen != ui::Screen::None {
+                                        let click = match button {
+                                            MouseButton::Left => Some(ui::Click::Left),
+                                            MouseButton::Right => Some(ui::Click::Right),
+                                            _ => None,
+                                        };
+                                        if let Some(click) = click {
+                                            state.click_slot_at(click);
+                                        }
+                                    } else {
+                                        state.mouse_buttons.insert(button);
+                                        if button == MouseButton::Right {
+                                            state.try_open_container();
+                                        }
                                     }
                                 }
                             }

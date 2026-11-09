@@ -243,21 +243,8 @@ pub fn draw_item_icon(b: &mut UiBuilder, a: &UiAssets, x: f32, y: f32, size: f32
     b.quad(x, y, size, size, *rect, pack_rgba(255, 255, 255, 255));
 }
 
-/// Draw a single inventory slot: background, item icon, and count.
-pub fn draw_slot(
-    b: &mut UiBuilder,
-    a: &UiAssets,
-    x: f32,
-    y: f32,
-    size: f32,
-    stack: &ItemStack,
-) {
-    b.quad(x, y, size, size, uv(a, "slot"), pack_rgba(255, 255, 255, 255));
-    draw_slot_contents(b, a, x, y, size, stack);
-}
-
 /// Draw a slot's item icon + count (no background), used where the background
-/// is painted separately (e.g. the hotbar strip).
+/// (hotbar strip or container GUI) already paints the slot frame.
 fn draw_slot_contents(
     b: &mut UiBuilder,
     a: &UiAssets,
@@ -477,11 +464,12 @@ pub fn draw_container_screen(
 
     let mut slots: Vec<(f32, f32)> = Vec::with_capacity(top.len() + INVENTORY_SIZE);
 
-    // Container-only slots.
+    // Container-only slots. The background texture already has the slot frames
+    // baked in, so only the item icon + count are drawn here (no slot overlay).
     for (i, &(gx, gy)) in layout.top_slots.iter().enumerate() {
         let x = ox + gx * s;
         let y = oy + gy * s;
-        draw_slot(b, a, x, y, 18.0 * s, top.get(i).unwrap_or(&ItemStack::EMPTY));
+        draw_slot_contents(b, a, x, y, 18.0 * s, top.get(i).unwrap_or(&ItemStack::EMPTY));
         slots.push((x, y));
     }
 
@@ -490,7 +478,7 @@ pub fn draw_container_screen(
         for col in 0..9 {
             let x = ox + (8.0 + col as f32 * 18.0) * s;
             let y = oy + (84.0 + row as f32 * 18.0) * s;
-            draw_slot(b, a, x, y, 18.0 * s, &player.inventory[9 + col + row * 9]);
+            draw_slot_contents(b, a, x, y, 18.0 * s, &player.inventory[9 + col + row * 9]);
             slots.push((x, y));
         }
     }
@@ -499,11 +487,59 @@ pub fn draw_container_screen(
     for col in 0..9 {
         let x = ox + (8.0 + col as f32 * 18.0) * s;
         let y = oy + 142.0 * s;
-        draw_slot(b, a, x, y, 18.0 * s, &player.inventory[col]);
+        draw_slot_contents(b, a, x, y, 18.0 * s, &player.inventory[col]);
         slots.push((x, y));
     }
 
     slots
+}
+
+/// Draw the pause (game) menu: a dim overlay, a title, and two buttons. Returns
+/// the two button rects `(x, y, w, h)` in order: "Back to Game", "Quit Game".
+pub fn draw_pause_screen(b: &mut UiBuilder, a: &UiAssets, screen: (u32, u32)) -> Vec<(f32, f32, f32, f32)> {
+    let s = gui_scale(screen.0, screen.1) as f32;
+    let (sw, sh) = (screen.0 as f32, screen.1 as f32);
+
+    // Dim the world behind the menu.
+    b.solid(a, 0.0, 0.0, sw, sh, pack_rgba(0, 0, 0, 140));
+
+    // Title.
+    let title = "Game Menu";
+    let tfs = 2.0 * s;
+    let tw = text_width(title, tfs);
+    draw_text(
+        b,
+        a,
+        (sw - tw) / 2.0,
+        sh * 0.30,
+        tfs,
+        title,
+        pack_rgba(255, 255, 255, 255),
+    );
+
+    // Buttons.
+    let bw = 200.0 * s;
+    let bh = 20.0 * s;
+    let bx = (sw - bw) / 2.0;
+    let by1 = sh * 0.50;
+    let by2 = by1 + bh + 4.0 * s;
+    let lfs = s;
+
+    for (by, label) in [(by1, "Back to Game"), (by2, "Quit Game")] {
+        b.solid(a, bx, by, bw, bh, pack_rgba(60, 60, 60, 220));
+        let lw = text_width(label, lfs);
+        draw_text(
+            b,
+            a,
+            bx + (bw - lw) / 2.0,
+            by + (bh - 8.0 * lfs) / 2.0,
+            lfs,
+            label,
+            pack_rgba(255, 255, 255, 255),
+        );
+    }
+
+    vec![(bx, by1, bw, bh), (bx, by2, bw, bh)]
 }
 
 /// The active UI screen.
@@ -514,6 +550,7 @@ pub enum Screen {
     Crafting,
     Furnace,
     Chest,
+    Pause,
 }
 
 /// A mouse click on a slot, used to move items between the cursor and the slot.
@@ -630,11 +667,10 @@ impl UiRenderer {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            // Linear filtering so item icons scale up smoothly instead of as
-            // hard pixel blocks. (A 1px transparent gap between atlas regions
-            // prevents cross-region bleeding.)
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
+            // Nearest filtering keeps the pixel-art UI (items, hearts, hotbar,
+            // font) crisp when scaled up.
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
 
