@@ -32,6 +32,8 @@ pub struct Player {
     /// The inventory; the first [`HOTBAR_SIZE`] slots are the hotbar.
     pub inventory: [ItemStack; INVENTORY_SIZE],
     pub selected_slot: usize,
+    /// The 3×3 crafting grid (flattened row-major).
+    pub crafting: [ItemStack; 9],
 }
 
 impl Player {
@@ -44,6 +46,7 @@ impl Player {
             on_ground: false,
             inventory: default_inventory(),
             selected_slot: 0,
+            crafting: [ItemStack::EMPTY; 9],
         }
     }
 
@@ -80,6 +83,28 @@ impl Player {
             }
         }
         remaining
+    }
+
+    /// Whether the selected hotbar item is a pickaxe.
+    pub fn holding_pickaxe(&self) -> bool {
+        crate::item::is_pickaxe(self.inventory[self.selected_slot].item)
+    }
+
+    /// Craft using the 3×3 crafting grid, consuming one of each input and adding
+    /// the output to the inventory. Returns the output (item, count), or `None`
+    /// if no recipe matches.
+    pub fn craft(&mut self) -> Option<(Item, u32)> {
+        let out = crate::recipe::craft(&self.crafting)?;
+        for slot in &mut self.crafting {
+            if !slot.is_empty() {
+                slot.count -= 1;
+                if slot.count == 0 {
+                    *slot = ItemStack::EMPTY;
+                }
+            }
+        }
+        self.add_item(out.0, out.1);
+        Some(out)
     }
 }
 

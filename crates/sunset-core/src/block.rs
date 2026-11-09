@@ -167,6 +167,31 @@ pub const BLOCKS: &[BlockDef] = &[
         end_axis: Some(Axis::Z),
         end_color: [150, 120, 80],
     },
+    // --- M3 additions: crafting/workstations and storage ---
+    BlockDef {
+        id: "minecraft:crafting_table",
+        color: [162, 130, 78],
+        shape: Shape::FullCube,
+        opacity: Opacity::Opaque,
+        end_axis: None,
+        end_color: [0, 0, 0],
+    },
+    BlockDef {
+        id: "minecraft:furnace",
+        color: [70, 70, 70],
+        shape: Shape::FullCube,
+        opacity: Opacity::Opaque,
+        end_axis: None,
+        end_color: [0, 0, 0],
+    },
+    BlockDef {
+        id: "minecraft:chest",
+        color: [146, 103, 50],
+        shape: Shape::FullCube,
+        opacity: Opacity::Opaque,
+        end_axis: None,
+        end_color: [0, 0, 0],
+    },
 ];
 
 impl BlockDef {

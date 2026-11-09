@@ -29,6 +29,16 @@ pub const NON_BLOCK_ITEMS: &[ItemDef] = &[
         max_stack: 64,
         block: None,
     },
+    ItemDef {
+        id: "minecraft:wooden_pickaxe",
+        max_stack: 1,
+        block: None,
+    },
+    ItemDef {
+        id: "minecraft:stone_pickaxe",
+        max_stack: 1,
+        block: None,
+    },
 ];
 
 /// Number of block items (one per block state).
@@ -74,6 +84,36 @@ pub fn item_by_id(id: &str) -> Option<Item> {
         .iter()
         .position(|d| d.id == id)
         .map(|i| block_item_count() + i as u32)
+}
+
+/// Whether an item is a pickaxe (tool eligibility for mining stone, M3).
+pub fn is_pickaxe(item: Item) -> bool {
+    matches!(
+        item_id(item),
+        Some("minecraft:wooden_pickaxe") | Some("minecraft:stone_pickaxe")
+    )
+}
+
+/// What a block drops when broken (M3). Stone requires a pickaxe and drops
+/// cobblestone; every other block drops its own item form with no tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DropInfo {
+    pub item: Item,
+    pub needs_pickaxe: bool,
+}
+
+/// The drop for breaking `state`.
+pub fn block_drop(state: BlockState) -> DropInfo {
+    match block_def(state).id {
+        "minecraft:stone" => DropInfo {
+            item: item_by_id("minecraft:cobblestone").expect("registered item"),
+            needs_pickaxe: true,
+        },
+        _ => DropInfo {
+            item: item_for_block(state),
+            needs_pickaxe: false,
+        },
+    }
 }
 
 /// A stack of a single item type.

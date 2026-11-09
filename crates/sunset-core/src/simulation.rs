@@ -3,7 +3,7 @@
 
 use crate::block::AIR;
 use crate::intent::{BlockAction, PlayerIntent};
-use crate::item::{item_def, item_for_block, ItemStack};
+use crate::item::{block_drop, item_def, ItemStack};
 use crate::physics::{self, Aabb};
 use crate::player::{Player, HOTBAR_SIZE, PLAYER_HALF_WIDTH, PLAYER_HEIGHT};
 use crate::world::World;
@@ -85,10 +85,12 @@ impl Simulation {
                         return;
                     }
                     self.world.set_block(pos[0], pos[1], pos[2], AIR);
-                    // Drop the block's item into the inventory (M3 increment 1:
-                    // every block drops its own item form).
-                    let drop = item_for_block(old);
-                    self.player.add_item(drop, 1);
+                    // Drop the block's item (respecting tool rules): stone
+                    // needs a pickaxe and drops cobblestone.
+                    let drop = block_drop(old);
+                    if !drop.needs_pickaxe || self.player.holding_pickaxe() {
+                        self.player.add_item(drop.item, 1);
+                    }
                 }
                 BlockAction::Place(pos) => {
                     let slot = self.player.inventory[self.player.selected_slot];
@@ -224,18 +226,18 @@ mod tests {
     #[test]
     fn breaking_a_block_drops_its_item() {
         let mut world = World::new();
-        let stone = state_by_id("minecraft:stone").unwrap();
-        world.set_block(0, 0, 0, stone);
+        let dirt = state_by_id("minecraft:dirt").unwrap();
+        world.set_block(0, 0, 0, dirt);
         let mut sim = Simulation::new(
             world,
             Player::new(glam::Vec3::new(5.0, 5.0, 5.0), 0.0, 0.0),
         );
-        let stone_item = item_by_id("minecraft:stone").unwrap();
+        let dirt_item = item_by_id("minecraft:dirt").unwrap();
         let before: u32 = sim
             .player
             .inventory
             .iter()
-            .filter(|s| s.item == stone_item)
+            .filter(|s| s.item == dirt_item)
             .map(|s| s.count)
             .sum();
         sim.step(
@@ -249,11 +251,58 @@ mod tests {
             .player
             .inventory
             .iter()
-            .filter(|s| s.item == stone_item)
+            .filter(|s| s.item == dirt_item)
             .map(|s| s.count)
             .sum();
-        assert_eq!(after, before + 1, "breaking stone should add one stone item");
+        assert_eq!(after, before + 1, "breaking dirt should add one dirt item");
         assert_eq!(sim.world.get_block(0, 0, 0), AIR);
+    }
+
+    #[test]
+    fn stone_requires_pickaxe_to_drop_cobblestone() {
+        let cobble_item = item_by_id("minecraft:cobblestone").unwrap();
+        let wooden_pickaxe = item_by_id("minecraft:wooden_pickaxe").unwrap();
+        let stone = state_by_id("minecraft:stone").unwrap();
+
+        let mut world = World::new();
+        world.set_block(0, 0, 0, stone);
+        let mut sim = Simulation::new(
+            world,
+            Player::new(glam::Vec3::new(5.0, 5.0, 5.0), 0.0, 0.0),
+        );
+        let count = |p: &Player| {
+            p.inventory
+                .iter()
+                .filter(|s| s.item == cobble_item)
+                .map(|s| s.count)
+                .sum::<u32>()
+        };
+
+        // Bare hands: stone breaks but drops nothing.
+        let before = count(&sim.player);
+        sim.step(
+            &PlayerIntent {
+                block_action: Some(BlockAction::Break([0, 0, 0])),
+                ..Default::default()
+            },
+            DT,
+        );
+        assert_eq!(sim.world.get_block(0, 0, 0), AIR);
+        assert_eq!(count(&sim.player), before, "stone without a pickaxe drops nothing");
+
+        // With a pickaxe: stone drops cobblestone.
+        sim.world.set_block(0, 0, 0, stone);
+        sim.player.inventory[0] = ItemStack::new(wooden_pickaxe, 1);
+        sim.player.selected_slot = 0;
+        let before = count(&sim.player);
+        sim.step(
+            &PlayerIntent {
+                block_action: Some(BlockAction::Break([0, 0, 0])),
+                ..Default::default()
+            },
+            DT,
+        );
+        assert_eq!(count(&sim.player), before + 1, "stone with a pickaxe drops cobblestone");
     }
 
     #[test]

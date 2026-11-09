@@ -30,6 +30,8 @@ pub struct PlayerSave {
     /// Inventory slots as (namespaced item id, count); empty slots are
     /// `minecraft:air` with count 0.
     pub inventory: Vec<ItemSave>,
+    /// The 3×3 crafting grid slots.
+    pub crafting: Vec<ItemSave>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -81,6 +83,14 @@ pub fn to_json(world: &World, player: &Player) -> String {
             selected_slot: player.selected_slot,
             inventory: player
                 .inventory
+                .iter()
+                .map(|s| ItemSave {
+                    id: item_id(s.item).unwrap_or("minecraft:air").to_string(),
+                    count: s.count,
+                })
+                .collect(),
+            crafting: player
+                .crafting
                 .iter()
                 .map(|s| ItemSave {
                     id: item_id(s.item).unwrap_or("minecraft:air").to_string(),
@@ -140,6 +150,12 @@ pub fn from_json(json: &str) -> Result<(World, Player), String> {
     for (i, is) in p.inventory.iter().enumerate() {
         if i < player.inventory.len() {
             player.inventory[i] =
+                ItemStack::new(item_by_id(&is.id).unwrap_or(EMPTY_ITEM), is.count);
+        }
+    }
+    for (i, is) in p.crafting.iter().enumerate() {
+        if i < player.crafting.len() {
+            player.crafting[i] =
                 ItemStack::new(item_by_id(&is.id).unwrap_or(EMPTY_ITEM), is.count);
         }
     }
