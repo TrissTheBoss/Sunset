@@ -1,5 +1,7 @@
 //! Crafting recipes and grid matching (M3).
 
+use std::sync::{LazyLock, RwLock};
+
 use crate::item::{item_by_id, Item, ItemStack};
 
 /// A shaped crafting recipe on a 3×3 grid; `None` cells must be empty.
@@ -9,7 +11,7 @@ pub struct Recipe {
 }
 
 /// The supported recipes (a small M3 subset, not full vanilla parity).
-pub fn recipes() -> Vec<Recipe> {
+fn core_recipes() -> Vec<Recipe> {
     let planks = item_by_id("minecraft:oak_planks").unwrap();
     let stick = item_by_id("minecraft:stick").unwrap();
     let table = item_by_id("minecraft:crafting_table").unwrap();
@@ -71,6 +73,15 @@ pub fn recipes() -> Vec<Recipe> {
     out
 }
 
+/// The runtime recipe list (core recipes plus mod-registered recipes).
+static RECIPES: LazyLock<RwLock<Vec<Recipe>>> =
+    LazyLock::new(|| RwLock::new(core_recipes()));
+
+/// Register a new recipe (mod content).
+pub fn register_recipe(recipe: Recipe) {
+    RECIPES.write().expect("recipe registry").push(recipe);
+}
+
 /// Whether `grid` matches `recipe` (non-empty pattern cells must match with a
 /// non-zero count; empty pattern cells must be empty).
 fn matches(grid: &[ItemStack; 9], recipe: &Recipe) -> bool {
@@ -96,7 +107,12 @@ fn matches(grid: &[ItemStack; 9], recipe: &Recipe) -> bool {
 
 /// Match `grid` against the recipes, returning the first matching output.
 pub fn craft(grid: &[ItemStack; 9]) -> Option<(Item, u32)> {
-    recipes().iter().find(|r| matches(grid, r)).map(|r| r.output)
+    RECIPES
+        .read()
+        .expect("recipe registry")
+        .iter()
+        .find(|r| matches(grid, r))
+        .map(|r| r.output)
 }
 
 #[cfg(test)]

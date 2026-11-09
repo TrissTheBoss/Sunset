@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use glam::Vec3;
 
-use sunset_core::block::{block_def, is_transparent, occludes, BlockState, Shape, AIR, BLOCKS};
+use sunset_core::block::{block_count, block_def, block_defs, is_transparent, occludes, BlockState, Shape, AIR};
 use sunset_core::chunk::{Chunk, CHUNK_HEIGHT, CHUNK_SIZE};
 use sunset_core::world::World;
 
@@ -34,20 +34,20 @@ impl FaceTable {
         face_textures: &HashMap<BlockState, FaceTextures>,
         uv: &HashMap<String, [f32; 4]>,
     ) -> Self {
-        let mut descs = vec![[FaceDesc { rect: None, color: [0.0; 4] }; 6]; BLOCKS.len()];
-        for (state, def) in BLOCKS.iter().enumerate() {
+        let mut descs = vec![[FaceDesc { rect: None, color: [0.0; 4] }; 6]; block_count() as usize];
+        for (state, def) in block_defs() {
             for face in 0..6 {
                 let normal = FACE_NORMALS[face];
                 let shade = FACE_SHADE[face];
                 let rect = face_textures
-                    .get(&(state as BlockState))
+                    .get(&state)
                     .and_then(|ft| ft.texture_for_face(normal, def.end_axis))
                     .and_then(|tex| uv.get(tex).copied());
                 let color = match rect {
                     Some(_) => [shade, shade, shade, 1.0],
                     None => {
                         let fc = def.face_color(normal);
-                        let alpha = if is_transparent(state as BlockState) { 0.45 } else { 1.0 };
+                        let alpha = if is_transparent(state) { 0.45 } else { 1.0 };
                         [
                             fc[0] as f32 / 255.0 * shade,
                             fc[1] as f32 / 255.0 * shade,
@@ -56,7 +56,7 @@ impl FaceTable {
                         ]
                     }
                 };
-                descs[state][face] = FaceDesc { rect, color };
+                descs[state as usize][face] = FaceDesc { rect, color };
             }
         }
         Self { descs }

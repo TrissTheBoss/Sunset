@@ -3,10 +3,15 @@
 //! slab, an orientable log, or a transparent block must not rewrite the world
 //! model, collision, or save identity.
 //!
-//! A block state is a compact index into [`BLOCKS`]; the durable identity is the
-//! namespaced [`BlockDef::id`] (which encodes state properties), never the index.
+//! A block state is a compact index into the runtime block [`Registry`]; the
+//! durable identity is the namespaced [`BlockDef::id`] (which encodes state
+//! properties), never the index. Mods register new blocks with [`register_block`].
+
+use std::sync::{LazyLock, RwLock};
 
 use glam::Vec3;
+
+use crate::registry::Registry;
 
 /// A compact block-state identifier (index into [`BLOCKS`]).
 pub type BlockState = u32;
@@ -60,8 +65,8 @@ pub struct BlockDef {
 }
 
 /// Authored development block set. Temporary materials; not a claim of vanilla
-/// parity.
-pub const BLOCKS: &[BlockDef] = &[
+/// parity. Mods extend the runtime registry (see [`register_block`]).
+const CORE_BLOCKS: &[BlockDef] = &[
     BlockDef {
         id: "minecraft:air",
         color: [0, 0, 0],
@@ -194,6 +199,18 @@ pub const BLOCKS: &[BlockDef] = &[
     },
 ];
 
+/// The runtime block registry (core content plus any mod-registered blocks).
+static BLOCKS: LazyLock<RwLock<Registry<BlockDef>>> =
+    LazyLock::new(|| RwLock::new(core_blocks()));
+
+fn core_blocks() -> Registry<BlockDef> {
+    let mut r = Registry::new();
+    for def in CORE_BLOCKS {
+        r.register(def.id, *def);
+    }
+    r
+}
+
 impl BlockDef {
     /// The block's collision AABB in block-local coordinates `(min, max)`, if
     /// the block has any collision.
@@ -224,16 +241,36 @@ impl BlockDef {
 }
 
 /// Look up a block definition by state. Unknown states fall back to air.
-pub fn block_def(state: BlockState) -> &'static BlockDef {
-    BLOCKS.get(state as usize).unwrap_or(&BLOCKS[AIR as usize])
+pub fn block_def(state: BlockState) -> BlockDef {
+    let reg = BLOCKS.read().expect("block registry");
+    reg.get(state)
+        .copied()
+        .unwrap_or_else(|| reg.get(AIR).copied().expect("air block registered"))
 }
 
 /// Look up a state by namespaced id.
 pub fn state_by_id(id: &str) -> Option<BlockState> {
+    BLOCKS.read().expect("block registry").find(id)
+}
+
+/// Number of registered blocks.
+pub fn block_count() -> u32 {
+    BLOCKS.read().expect("block registry").len() as u32
+}
+
+/// Register a new block (mod content), returning its state id.
+pub fn register_block(def: BlockDef) -> BlockState {
+    BLOCKS.write().expect("block registry").register(def.id, def)
+}
+
+/// Snapshot all registered blocks as `(state, definition)`.
+pub fn block_defs() -> Vec<(BlockState, BlockDef)> {
     BLOCKS
+        .read()
+        .expect("block registry")
         .iter()
-        .position(|b| b.id == id)
-        .map(|i| i as BlockState)
+        .map(|(i, d)| (i, *d))
+        .collect()
 }
 
 /// Whether a block has any collision geometry.

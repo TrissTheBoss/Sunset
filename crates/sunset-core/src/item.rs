@@ -2,7 +2,10 @@
 //! block states: a block item is the placeable "item form" of a block, while
 //! non-block items (sticks, tools, …) have no block form.
 
-use crate::block::{block_def, state_by_id, BlockState, BLOCKS};
+use std::sync::{LazyLock, RwLock};
+
+use crate::block::{block_def, state_by_id, BlockState};
+use crate::registry::Registry;
 
 /// A stackable item (an index into the item space: block items first, then
 /// non-block items).
@@ -22,8 +25,8 @@ pub struct ItemDef {
     pub block: Option<BlockState>,
 }
 
-/// Non-block items, indexed after the block items.
-pub const NON_BLOCK_ITEMS: &[ItemDef] = &[
+/// Non-block items, indexed after the block items (core content).
+const CORE_NON_BLOCK_ITEMS: &[ItemDef] = &[
     ItemDef {
         id: "minecraft:stick",
         max_stack: 64,
@@ -41,9 +44,21 @@ pub const NON_BLOCK_ITEMS: &[ItemDef] = &[
     },
 ];
 
+/// The runtime non-block item registry (core content plus mod-registered items).
+static NON_BLOCK_ITEMS: LazyLock<RwLock<Registry<ItemDef>>> =
+    LazyLock::new(|| RwLock::new(core_non_block_items()));
+
+fn core_non_block_items() -> Registry<ItemDef> {
+    let mut r = Registry::new();
+    for def in CORE_NON_BLOCK_ITEMS {
+        r.register(def.id, *def);
+    }
+    r
+}
+
 /// Number of block items (one per block state).
 fn block_item_count() -> u32 {
-    BLOCKS.len() as u32
+    crate::block::block_count()
 }
 
 /// The definition of an item, or `None` for [`EMPTY_ITEM`].
@@ -61,13 +76,26 @@ pub fn item_def(item: Item) -> Option<ItemDef> {
             block: Some(state),
         })
     } else {
-        NON_BLOCK_ITEMS.get((item - n) as usize).copied()
+        NON_BLOCK_ITEMS
+            .read()
+            .expect("item registry")
+            .get(item - n)
+            .copied()
     }
 }
 
 /// The item corresponding to a block state (its "item form").
 pub fn item_for_block(state: BlockState) -> Item {
     state
+}
+
+/// Register a new non-block item (mod content), returning its item id.
+pub fn register_item(def: ItemDef) -> Item {
+    let idx = NON_BLOCK_ITEMS
+        .write()
+        .expect("item registry")
+        .register(def.id, def);
+    block_item_count() + idx
 }
 
 /// The namespaced id of an item, or `None` for [`EMPTY_ITEM`].
@@ -81,9 +109,10 @@ pub fn item_by_id(id: &str) -> Option<Item> {
         return Some(item_for_block(state));
     }
     NON_BLOCK_ITEMS
-        .iter()
-        .position(|d| d.id == id)
-        .map(|i| block_item_count() + i as u32)
+        .read()
+        .expect("item registry")
+        .find(id)
+        .map(|i| block_item_count() + i)
 }
 
 /// Whether an item is a pickaxe (tool eligibility for mining stone, M3).

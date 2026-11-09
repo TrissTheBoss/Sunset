@@ -147,7 +147,7 @@ pub fn load_assets(minecraft_dir: &Path) -> Result<LoadedAssets, String> {
     let mut face_textures: HashMap<BlockState, FaceTextures> = HashMap::new();
     let mut texture_bytes: HashMap<String, Vec<u8>> = HashMap::new();
 
-    for (state, def) in sunset_core::BLOCKS.iter().enumerate() {
+    for (state, def) in sunset_core::block_defs() {
         if state == 0 {
             continue; // air
         }
@@ -205,7 +205,7 @@ pub fn load_assets(minecraft_dir: &Path) -> Result<LoadedAssets, String> {
             }
         }
 
-        face_textures.insert(state as BlockState, ft);
+        face_textures.insert(state, ft);
     }
 
     // Build the atlas.

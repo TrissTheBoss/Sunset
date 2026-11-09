@@ -15,15 +15,21 @@ pub mod item;
 pub mod physics;
 pub mod player;
 pub mod recipe;
+pub mod registry;
 pub mod save;
 pub mod simulation;
 pub mod world;
 
 pub use block::{
-    block_def, has_collision, is_transparent, occludes, occlusion_key, state_by_id, Axis,
-    BlockDef, BlockState, Opacity, Shape, AIR, BLOCKS,
+    block_count, block_def, block_defs, has_collision, is_transparent, occludes, occlusion_key,
+    register_block, state_by_id, Axis, BlockDef, BlockState, Opacity, Shape, AIR,
 };
 pub use block_entity::{is_fuel, smelt_result, tick_furnace, BlockEntity, Chest, Furnace, CHEST_SIZE};
 pub use chunk::{Chunk, CHUNK_HEIGHT, CHUNK_SIZE};
-pub use item::{item_by_id, item_def, item_for_block, item_id, is_pickaxe, block_drop, Item, ItemDef, ItemStack, DropInfo, EMPTY_ITEM};
+pub use item::{
+    block_drop, is_pickaxe, item_by_id, item_def, item_for_block, item_id, register_item, DropInfo,
+    Item, ItemDef, ItemStack, EMPTY_ITEM,
+};
+pub use registry::Registry;
+pub use recipe::{craft, register_recipe, Recipe};
 pub use world::World;
