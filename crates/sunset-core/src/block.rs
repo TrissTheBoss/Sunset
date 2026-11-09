@@ -228,3 +228,23 @@ pub fn occludes(state: BlockState) -> bool {
 pub fn is_transparent(state: BlockState) -> bool {
     block_def(state).opacity == Opacity::Transparent
 }
+
+/// A compact key for the occlusion information a block exposes to neighbouring
+/// meshes — enough to decide whether a neighbour's faces change. Material
+/// (color/texture) is deliberately excluded so a material-only change (e.g.
+/// dirt → stone) does not invalidate neighbours (M14).
+pub fn occlusion_key(state: BlockState) -> u8 {
+    let def = block_def(state);
+    match def.shape {
+        Shape::None => 0,
+        Shape::FullCube => {
+            if def.opacity == Opacity::Opaque {
+                1
+            } else {
+                2
+            }
+        }
+        Shape::SlabBottom => 3,
+        Shape::SlabTop => 4,
+    }
+}

@@ -19,7 +19,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
-use sunset_core::block::{block_def, BlockState};
+use sunset_core::block::{block_def, occlusion_key, BlockState};
 use sunset_core::chunk::{CHUNK_HEIGHT, CHUNK_SIZE};
 use sunset_core::fixture;
 use sunset_core::intent::{BlockAction, PlayerIntent};
@@ -985,6 +985,37 @@ fn chunk_dist_sq(eye: Vec3, cx: i32, cz: i32) -> f32 {
     dx * dx + dy * dy + dz * dz
 }
 
+/// Which chunks need remeshing after an edit at world `pos`, where the block
+/// changed from `old` to `new`. Always returns the owning chunk; a neighbour is
+/// added only when the edit touches its border AND the occlusion info that
+/// neighbour reads actually changed (M14). Two opaque cubes (e.g. dirt → stone)
+/// expose the same occlusion, so a material-only border change is not
+/// propagated.
+fn edit_dirty_chunks(pos: [i32; 3], old: BlockState, new: BlockState) -> Vec<(i32, i32)> {
+    let cx = pos[0].div_euclid(CHUNK_SIZE as i32);
+    let cz = pos[2].div_euclid(CHUNK_SIZE as i32);
+    let lx = pos[0].rem_euclid(CHUNK_SIZE as i32);
+    let lz = pos[2].rem_euclid(CHUNK_SIZE as i32);
+
+    let mut dirty = vec![(cx, cz)];
+    if occlusion_key(old) != occlusion_key(new) {
+        let last = CHUNK_SIZE as i32 - 1;
+        if lx == 0 {
+            dirty.push((cx - 1, cz));
+        }
+        if lx == last {
+            dirty.push((cx + 1, cz));
+        }
+        if lz == 0 {
+            dirty.push((cx, cz - 1));
+        }
+        if lz == last {
+            dirty.push((cx, cz + 1));
+        }
+    }
+    dirty
+}
+
 /// The renderer state: surface/device, the authoritative simulation, and input.
 struct State {
     window: Arc<Window>,
@@ -1003,8 +1034,6 @@ struct State {
     /// Texture data retained so the mesh can be rebuilt after an edit.
     face_textures: HashMap<BlockState, FaceTextures>,
     uv: HashMap<String, [f32; 4]>,
-    /// Per-chunk revisions at last mesh, used to detect which chunks changed.
-    chunk_revisions: HashMap<(i32, i32), u64>,
     last_time: Instant,
     accumulator: f32,
     frames: u64,
@@ -1074,12 +1103,10 @@ impl State {
         // Build per-chunk meshes (never a single combined world mesh, so an
         // edit can re-mesh just the affected chunk and its neighbours).
         let mut chunk_meshes: HashMap<(i32, i32), ChunkMesh> = HashMap::new();
-        let mut chunk_revisions: HashMap<(i32, i32), u64> = HashMap::new();
         for chunk in world.chunks() {
             let (opaque, transparent) =
                 mesh::build_chunk_meshes(&world, chunk, &face_textures, &uv);
             chunk_meshes.insert((chunk.cx, chunk.cz), ChunkMesh { opaque, transparent });
-            chunk_revisions.insert((chunk.cx, chunk.cz), chunk.revision);
         }
         let opaque_verts: usize = chunk_meshes.values().map(|c| c.opaque.vertices.len()).sum();
         let opaque_tris: usize = chunk_meshes.values().map(|c| c.opaque.indices.len() / 3).sum();
@@ -1126,7 +1153,6 @@ impl State {
             target: None,
             face_textures,
             uv,
-            chunk_revisions,
             last_time: Instant::now(),
             accumulator: 0.0,
             frames: 0,
@@ -1157,34 +1183,12 @@ impl State {
         }
     }
 
-    /// Re-mesh any chunks whose revision changed, plus their boundary neighbours
-    /// (whose face visibility depends on the edit).
-    fn sync_meshes(&mut self) {
-        let mut changed: Vec<(i32, i32)> = Vec::new();
-        for chunk in self.sim.world.chunks() {
-            let key = (chunk.cx, chunk.cz);
-            let unchanged = self
-                .chunk_revisions
-                .get(&key)
-                .is_some_and(|r| *r == chunk.revision);
-            if !unchanged {
-                changed.push(key);
-            }
-        }
-        if changed.is_empty() {
-            return;
-        }
-        let mut dirty: Vec<(i32, i32)> = Vec::new();
-        for (cx, cz) in changed {
-            dirty.push((cx, cz));
-            dirty.push((cx + 1, cz));
-            dirty.push((cx - 1, cz));
-            dirty.push((cx, cz + 1));
-            dirty.push((cx, cz - 1));
-        }
-        dirty.sort_unstable();
-        dirty.dedup();
-        for (cx, cz) in dirty {
+    /// Re-mesh the chunks affected by an edit at `pos`, where the block changed
+    /// from `old` to `new`. The owning chunk is always rebuilt; a neighbour is
+    /// rebuilt only when the edit touches its border and the occlusion it reads
+    /// changed (M14).
+    fn apply_edit(&mut self, pos: [i32; 3], old: BlockState, new: BlockState) {
+        for (cx, cz) in edit_dirty_chunks(pos, old, new) {
             self.remesh_chunk(cx, cz);
         }
     }
@@ -1200,7 +1204,6 @@ impl State {
         if let Some(r) = self.renderer.as_mut() {
             r.update_chunk(&self.device, &self.queue, cx, cz, &mesh);
         }
-        self.chunk_revisions.insert((cx, cz), chunk.revision);
     }
 
     fn render(&mut self) -> bool {
@@ -1283,9 +1286,13 @@ impl State {
                 });
             }
         }
-        // Only a block action can mutate the world; note whether one was
-        // attempted so unchanged frames can skip the revision scan.
-        let world_may_have_changed = self.intent.block_action.is_some();
+        // Capture the edit (position + old block state) before stepping, for
+        // M14 border-aware invalidation. Block edits are the only mutation, so
+        // this is the sole invalidation trigger.
+        let edit = self.intent.block_action.map(|a| match a {
+            BlockAction::Break(pos) | BlockAction::Place(pos) => pos,
+        });
+        let edit_old = edit.map(|pos| self.sim.world.get_block(pos[0], pos[1], pos[2]));
 
         while self.accumulator >= FIXED_DT {
             self.sim.step(&self.intent, FIXED_DT);
@@ -1294,10 +1301,10 @@ impl State {
         self.intent.block_action = None;
         self.intent.select_slot = None;
 
-        // Re-mesh only when an edit may have happened; avoid scanning every
-        // chunk revision on frames with no possible mutation (M13).
-        if world_may_have_changed {
-            self.sync_meshes();
+        // Re-mesh only the chunks actually affected by the edit (M14).
+        if let (Some(pos), Some(old)) = (edit, edit_old) {
+            let new = self.sim.world.get_block(pos[0], pos[1], pos[2]);
+            self.apply_edit(pos, old, new);
         }
 
         // Interpolate the camera between the previous and current fixed-tick
@@ -1533,6 +1540,44 @@ mod tests {
         assert!(!frustum.intersects_aabb([-8.0, 0.0, 100.0], [8.0, 64.0, 108.0]));
         // Far to the side (outside the 70° FOV): culled.
         assert!(!frustum.intersects_aabb([1000.0, 0.0, -10.0], [1016.0, 64.0, 6.0]));
+    }
+
+    #[test]
+    fn interior_edit_invalidates_only_owner() {
+        let stone = sunset_core::block::state_by_id("minecraft:stone").unwrap();
+        // Edit at (8, 4, 8): chunk (0, 0), local (8, 8) — interior (not on a border).
+        assert_eq!(
+            edit_dirty_chunks([8, 4, 8], stone, sunset_core::block::AIR),
+            vec![(0, 0)]
+        );
+    }
+
+    #[test]
+    fn boundary_edit_invalidates_neighbour() {
+        let stone = sunset_core::block::state_by_id("minecraft:stone").unwrap();
+        // Edit at (15, 4, 8): chunk (0, 0), local x = 15 (right border).
+        assert_eq!(
+            edit_dirty_chunks([15, 4, 8], stone, sunset_core::block::AIR),
+            vec![(0, 0), (1, 0)]
+        );
+    }
+
+    #[test]
+    fn border_material_change_does_not_invalidate_neighbour() {
+        let stone = sunset_core::block::state_by_id("minecraft:stone").unwrap();
+        let dirt = sunset_core::block::state_by_id("minecraft:dirt").unwrap();
+        // dirt → stone at x=15: same occlusion (opaque full cube), no neighbour.
+        assert_eq!(edit_dirty_chunks([15, 4, 8], dirt, stone), vec![(0, 0)]);
+    }
+
+    #[test]
+    fn corner_edit_invalidates_two_neighbours() {
+        let stone = sunset_core::block::state_by_id("minecraft:stone").unwrap();
+        // Edit at (0, 4, 0): chunk (0, 0), local (0, 0) — corner touches -X and -Z.
+        assert_eq!(
+            edit_dirty_chunks([0, 4, 0], stone, sunset_core::block::AIR),
+            vec![(0, 0), (-1, 0), (0, -1)]
+        );
     }
 }
 
