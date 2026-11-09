@@ -305,23 +305,22 @@ fn isometric_block_icon(
     side: &image::RgbaImage,
     is_slab: bool,
 ) -> image::RgbaImage {
-    // Render at 32×32 (higher-res than the 16px flat items) so the diagonal
-    // edges are smoother. Coordinates are the original 16×16 geometry scaled by
-    // 2, shifted by -0.5 so the cube's edges land on pixel boundaries.
-    const S: f32 = 32.0;
-    let mut out = image::RgbaImage::new(S as u32, S as u32);
-    let c = S / 16.0;
+    // Render at 32×32 with a small margin so the cube's diagonal edges don't
+    // touch the sprite bounds (and thus the slot border). Coordinates are in the
+    // 32×32 sprite space.
+    const S: u32 = 32;
+    let mut out = image::RgbaImage::new(S, S);
     if is_slab {
         // Bottom slab: the top face sits at the block's vertical middle and the
-        // body runs down to the bottom (matching vanilla's default bottom slab).
-        map_face(&mut out, (7.5 * c, 3.5 * c), (15.5 * c, 7.5 * c), (-0.5 * c, 7.5 * c), top, 1.0);
-        map_face(&mut out, (-0.5 * c, 7.5 * c), (7.5 * c, 11.5 * c), (-0.5 * c, 11.5 * c), side, 0.8);
-        map_face(&mut out, (7.5 * c, 11.5 * c), (15.5 * c, 7.5 * c), (7.5 * c, 15.5 * c), side, 0.6);
+        // half-height body runs down to the bottom.
+        map_face(&mut out, (16.0, 10.0), (30.0, 16.0), (2.0, 16.0), top, 1.0);
+        map_face(&mut out, (2.0, 16.0), (16.0, 22.0), (2.0, 23.0), side, 0.8);
+        map_face(&mut out, (16.0, 22.0), (30.0, 16.0), (16.0, 29.0), side, 0.6);
     } else {
-        // Full cube: top face at the top, full-height body.
-        map_face(&mut out, (7.5 * c, -0.5 * c), (15.5 * c, 3.5 * c), (-0.5 * c, 3.5 * c), top, 1.0);
-        map_face(&mut out, (-0.5 * c, 3.5 * c), (7.5 * c, 7.5 * c), (-0.5 * c, 11.5 * c), side, 0.8);
-        map_face(&mut out, (7.5 * c, 7.5 * c), (15.5 * c, 3.5 * c), (7.5 * c, 15.5 * c), side, 0.6);
+        // Full cube.
+        map_face(&mut out, (16.0, 3.0), (30.0, 9.0), (2.0, 9.0), top, 1.0);
+        map_face(&mut out, (2.0, 9.0), (16.0, 15.0), (2.0, 23.0), side, 0.8);
+        map_face(&mut out, (16.0, 15.0), (30.0, 9.0), (16.0, 29.0), side, 0.6);
     }
     out
 }
@@ -363,6 +362,9 @@ fn block_item_isometric(
     if id == "minecraft:grass_block" {
         tint_grass_green(&mut top);
     }
+    // A slab's side texture already shows the half-height slab in its top half;
+    // use only that so the half-height face is not squashed.
+    let side = if is_slab { crop(&side, 16, 8) } else { side };
     Some(isometric_block_icon(&top, &side, is_slab))
 }
 

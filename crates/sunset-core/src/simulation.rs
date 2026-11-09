@@ -48,9 +48,15 @@ impl Simulation {
         let right = yaw_quat * glam::Vec3::X;
         let wish = forward * intent.move_axis.y + right * intent.move_axis.x;
 
-        // Horizontal velocity (instant, Creative-style movement).
-        self.player.vel.x = wish.x * WALK_SPEED;
-        self.player.vel.z = wish.z * WALK_SPEED;
+        // Horizontal velocity with momentum: accelerate toward the wish velocity
+        // and let friction decay it when there is no input, instead of setting it
+        // instantly (which felt like Creative-style movement with no momentum).
+        const GROUND_ACCEL: f32 = 10.0; // per second; ~0.1s to reach full speed
+        let target_x = wish.x * WALK_SPEED;
+        let target_z = wish.z * WALK_SPEED;
+        let factor = 1.0 - (-GROUND_ACCEL * dt).exp();
+        self.player.vel.x += (target_x - self.player.vel.x) * factor;
+        self.player.vel.z += (target_z - self.player.vel.z) * factor;
 
         // Jump.
         if intent.jump && self.player.on_ground {

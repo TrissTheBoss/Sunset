@@ -288,7 +288,8 @@ pub fn draw_hotbar(
     let hw = 182.0 * s;
     let hh = 22.0 * s;
     let x = (sw - hw) / 2.0;
-    let y = sh - hh;
+    // The hotbar floats slightly above the bottom edge of the screen.
+    let y = sh - hh - 2.0 * s;
     b.quad(x, y, hw, hh, hotbar, pack_rgba(255, 255, 255, 255));
 
     for (i, stack) in inventory.iter().enumerate().take(HOTBAR_SIZE) {
