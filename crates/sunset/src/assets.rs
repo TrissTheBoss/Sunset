@@ -300,14 +300,22 @@ fn ensure_16(img: &image::RgbaImage) -> image::RgbaImage {
 /// textures (a cube seen from an elevated 45° angle, like Minecraft's block
 /// items). The top face is unshaded, the front face is slightly shaded, and the
 /// side face is darker, so the sprite reads as three-dimensional.
-fn isometric_block_icon(top: &image::RgbaImage, side: &image::RgbaImage) -> image::RgbaImage {
+fn isometric_block_icon(
+    top: &image::RgbaImage,
+    side: &image::RgbaImage,
+    half_height: bool,
+) -> image::RgbaImage {
     let mut out = image::RgbaImage::new(16, 16);
-    // Top face (diamond): tex (0,0)->(8,0), (1,0)->(16,4), (0,1)->(0,4).
-    map_face(&mut out, (8.0, 0.0), (16.0, 4.0), (0.0, 4.0), top, 1.0);
-    // Front face (left parallelogram): (0,4), (8,8), (0,12).
-    map_face(&mut out, (0.0, 4.0), (8.0, 8.0), (0.0, 12.0), side, 0.8);
-    // Side face (right parallelogram): (8,8), (16,4), (8,16).
-    map_face(&mut out, (8.0, 8.0), (16.0, 4.0), (8.0, 16.0), side, 0.6);
+    // Shift the cube by -0.5 so its edges land on pixel boundaries instead of
+    // being clipped 1px on the right/bottom.
+    // Top face (diamond): tex (0,0)->(7.5,-0.5), (1,0)->(15.5,3.5), (0,1)->(-0.5,3.5).
+    map_face(&mut out, (7.5, -0.5), (15.5, 3.5), (-0.5, 3.5), top, 1.0);
+    // Front face (left parallelogram), full or half height.
+    let front_bottom = if half_height { 7.5 } else { 11.5 };
+    map_face(&mut out, (-0.5, 3.5), (7.5, 7.5), (-0.5, front_bottom), side, 0.8);
+    // Side face (right parallelogram), full or half height.
+    let side_bottom = if half_height { 11.5 } else { 15.5 };
+    map_face(&mut out, (7.5, 7.5), (15.5, 3.5), (7.5, side_bottom), side, 0.6);
     out
 }
 
@@ -315,6 +323,7 @@ fn isometric_block_icon(top: &image::RgbaImage, side: &image::RgbaImage) -> imag
 fn block_item_isometric(
     archive: &mut zip::ZipArchive<File>,
     ft: &FaceTextures,
+    half_height: bool,
 ) -> Option<image::RgbaImage> {
     let top_name = ft
         .top
@@ -329,7 +338,7 @@ fn block_item_isometric(
         .or_else(|| ft.all.clone())?;
     let top = load_texture_image(archive, &top_name)?;
     let side = load_texture_image(archive, &side_name)?;
-    Some(isometric_block_icon(&top, &side))
+    Some(isometric_block_icon(&top, &side, half_height))
 }
 
 /// Map a texture onto a parallelogram (defined by its three corners for tex
@@ -435,7 +444,11 @@ fn build_ui_atlas(
             let Some(ft) = face_textures.get(&state) else {
                 continue;
             };
-            let Some(img) = block_item_isometric(archive, ft) else {
+            let half_height = matches!(
+                sunset_core::block::block_def(state).shape,
+                sunset_core::block::Shape::SlabBottom | sunset_core::block::Shape::SlabTop
+            );
+            let Some(img) = block_item_isometric(archive, ft, half_height) else {
                 continue;
             };
             (format!("item3d:{}", def.id), img)

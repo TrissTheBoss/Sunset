@@ -19,6 +19,7 @@ static TEXTURES: LazyLock<RwLock<HashMap<String, image::RgbaImage>>> =
 
 /// Register a custom UI texture (mod content). It is packed into the UI atlas
 /// automatically and becomes addressable by `name` from widgets.
+#[allow(dead_code)] // mod-facing API; exercised by tests, used by external mods
 pub fn register_texture(name: &str, image: image::RgbaImage) {
     TEXTURES
         .write()
@@ -75,6 +76,7 @@ pub struct Button {
 
 /// A registered UI widget. Buttons are the first kind; labels, panels, and
 /// images extend this enum without changing the registry or the render loop.
+#[allow(dead_code)] // mod-facing API; constructed by external mods
 pub enum Widget {
     Button(Button),
 }
@@ -83,6 +85,7 @@ static WIDGETS: LazyLock<RwLock<Vec<Widget>>> = LazyLock::new(|| RwLock::new(Vec
 
 /// Register a widget (mod content), returning its index. It is drawn and
 /// hit-tested automatically.
+#[allow(dead_code)] // mod-facing API; exercised by tests, used by external mods
 pub fn register_widget(widget: Widget) -> usize {
     let mut widgets = WIDGETS.write().expect("ui widget registry");
     widgets.push(widget);
@@ -90,6 +93,7 @@ pub fn register_widget(widget: Widget) -> usize {
 }
 
 /// Register a button widget (convenience wrapper), returning its index.
+#[allow(dead_code)] // mod-facing API; exercised by tests, used by external mods
 pub fn register_button(button: Button) -> usize {
     register_widget(Widget::Button(button))
 }

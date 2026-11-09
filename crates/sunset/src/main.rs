@@ -1876,52 +1876,7 @@ impl ApplicationHandler for App {
     }
 }
 
-/// Register demo content that exercises the modular widget system: a custom
-/// button texture plus two buttons (fullscreen toggle and quit), placed in the
-/// top-left corner. This is development content, not a vanilla feature.
-fn setup_demo_ui() {
-    // A simple beveled button texture (normal + hover variants).
-    let (w, h) = (100u32, 20u32);
-    let mut normal = image::RgbaImage::new(w, h);
-    let mut hover = image::RgbaImage::new(w, h);
-    for y in 0..h {
-        for x in 0..w {
-            let border = x < 2 || y < 2 || x >= w - 2 || y >= h - 2;
-            let fill = if border { [60, 60, 60, 255] } else { [120, 120, 120, 255] };
-            let hfill = if border { [80, 80, 80, 255] } else { [150, 150, 150, 255] };
-            normal.put_pixel(x, y, image::Rgba(fill));
-            hover.put_pixel(x, y, image::Rgba(hfill));
-        }
-    }
-    widgets::register_texture("sunset:button", normal);
-    widgets::register_texture("sunset:button_hover", hover);
-
-    widgets::register_button(widgets::Button {
-        id: "sunset:fullscreen",
-        texture: "sunset:button",
-        hover_texture: Some("sunset:button_hover"),
-        x: 8.0,
-        y: 8.0,
-        width: 100.0,
-        height: 20.0,
-        label: Some("Fullscreen"),
-        on_click: |ctx| ctx.toggle_fullscreen = true,
-    });
-    widgets::register_button(widgets::Button {
-        id: "sunset:quit",
-        texture: "sunset:button",
-        hover_texture: Some("sunset:button_hover"),
-        x: 8.0,
-        y: 32.0,
-        width: 100.0,
-        height: 20.0,
-        label: Some("Quit"),
-        on_click: |ctx| ctx.quit = true,
-    });
-}
-
 fn main() {
-    setup_demo_ui();
     let event_loop = EventLoop::new().expect("could not create event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App { state: None };
