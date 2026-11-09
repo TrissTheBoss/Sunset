@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use glam::{Quat, Vec2, Vec3};
+use glam::{Mat4, Quat, Vec2, Vec3};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
@@ -17,23 +17,31 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
+use sunset_core::block::{block_def, BlockState};
 use sunset_core::fixture;
-use sunset_core::intent::PlayerIntent;
+use sunset_core::intent::{BlockAction, PlayerIntent};
+use sunset_core::physics;
 use sunset_core::player::{Player, PLAYER_EYE_HEIGHT, PLAYER_HEIGHT};
 use sunset_core::simulation::Simulation;
+use sunset_core::world::World;
 
+use assets::FaceTextures;
 use mesh::{MeshData, Vertex};
 
 /// Look sensitivity in radians per pixel of mouse motion.
 const SENSITIVITY: f32 = 0.0025;
 /// Fixed simulation tick (20 Hz), matching the Bevy adapter.
 const FIXED_DT: f32 = 1.0 / 20.0;
+/// Block interaction reach distance (blocks).
+const REACH: f32 = 5.0;
 
-/// A 4x4 view-projection matrix, updated once per frame.
+/// Per-frame camera data: the world view-projection plus the outline's model
+/// matrix (the outline is a static unit cube scaled/translated per frame).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct CameraUniform {
     view_proj: [[f32; 4]; 4],
+    outline_model: [[f32; 4]; 4],
 }
 
 /// The interleaved vertex layout: position(f32x3) + uv(f32x2) + color(f32x4).
@@ -77,11 +85,15 @@ struct VsOut {
     @location(1) color: vec4<f32>,
     @location(2) rect: vec4<f32>,
 };
-@group(0) @binding(0) var<uniform> view_proj: mat4x4<f32>;
+struct Camera {
+    view_proj: mat4x4<f32>,
+    outline_model: mat4x4<f32>,
+};
+@group(0) @binding(0) var<uniform> camera: Camera;
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     var out: VsOut;
-    out.clip = view_proj * vec4<f32>(in.position, 1.0);
+    out.clip = camera.view_proj * vec4<f32>(in.position, 1.0);
     out.uv = in.uv;
     out.color = in.color;
     out.rect = in.rect;
@@ -96,6 +108,42 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let u = mix(in.rect.x, in.rect.z, fract(in.uv.x));
     let v = mix(in.rect.y, in.rect.w, fract(in.uv.y));
     return textureSample(tex, samp, vec2<f32>(u, v)) * in.color;
+}
+"#;
+
+/// A single line-list vertex (highlight outline): position only.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct LineVertex {
+    position: [f32; 3],
+}
+
+/// Vertex layout for the highlight outline (line list).
+const LINE_LAYOUT: wgpu::VertexBufferLayout = wgpu::VertexBufferLayout {
+    array_stride: std::mem::size_of::<LineVertex>() as wgpu::BufferAddress,
+    step_mode: wgpu::VertexStepMode::Vertex,
+    attributes: &[wgpu::VertexAttribute {
+        offset: 0,
+        shader_location: 0,
+        format: wgpu::VertexFormat::Float32x3,
+    }],
+};
+
+/// Unlit line shader: transform the unit-cube outline by its model matrix and
+/// the view-projection, then emit a solid black pixel.
+const LINE_SHADER: &str = r#"
+struct Camera {
+    view_proj: mat4x4<f32>,
+    outline_model: mat4x4<f32>,
+};
+@group(0) @binding(0) var<uniform> camera: Camera;
+@vertex
+fn vs_main(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {
+    return camera.view_proj * camera.outline_model * vec4<f32>(position, 1.0);
+}
+@fragment
+fn fs_main() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
 }
 "#;
 
@@ -114,6 +162,8 @@ struct Renderer {
     bind_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
     depth_view: wgpu::TextureView,
+    line_pipeline: wgpu::RenderPipeline,
+    line_vertex_buffer: wgpu::Buffer,
 }
 
 impl Renderer {
@@ -293,12 +343,66 @@ impl Renderer {
             transparent,
         );
 
+        let line_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("line shader"),
+            source: wgpu::ShaderSource::Wgsl(LINE_SHADER.into()),
+        });
+        let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("line pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &line_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(LINE_LAYOUT)],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &line_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::LineList,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let line_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("outline"),
+            size: (std::mem::size_of::<LineVertex>() * 24) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // Upload the static unit-cube outline once; the per-frame transform is
+        // applied via the model matrix in the uniform.
+        queue.write_buffer(
+            &line_vertex_buffer,
+            0,
+            bytemuck::cast_slice(&unit_cube_outline()),
+        );
+
         Self {
             opaque: opaque_drawable,
             transparent: transparent_drawable,
             bind_group,
             uniform_buffer,
             depth_view,
+            line_pipeline,
+            line_vertex_buffer,
         }
     }
 
@@ -306,7 +410,7 @@ impl Renderer {
         self.depth_view = create_depth_view(device, width, height);
     }
 
-    fn render(&self, device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView) {
+    fn render(&self, device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView, outline: bool) {
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
@@ -373,7 +477,57 @@ impl Renderer {
             self.draw(&mut pass, &self.transparent);
         }
 
+        // Highlight pass: draw the targeted block's outline over the scene.
+        if outline {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("outline"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.line_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
+            pass.draw(0..24, 0..1);
+        }
+
         queue.submit([encoder.finish()]);
+    }
+
+    /// Re-upload the opaque and transparent meshes after a block edit. The
+    /// pipelines are reused; only the vertex/index buffers are recreated.
+    fn rebuild_meshes(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        opaque: &MeshData,
+        transparent: &MeshData,
+    ) {
+        let (vb, ib, n) = create_mesh_buffers(device, queue, opaque);
+        self.opaque.vertex_buffer = vb;
+        self.opaque.index_buffer = ib;
+        self.opaque.index_count = n;
+        let (vb, ib, n) = create_mesh_buffers(device, queue, transparent);
+        self.transparent.vertex_buffer = vb;
+        self.transparent.index_buffer = ib;
+        self.transparent.index_count = n;
     }
 
     fn draw(&self, pass: &mut wgpu::RenderPass<'_>, drawable: &Drawable) {
@@ -385,21 +539,12 @@ impl Renderer {
     }
 }
 
-/// Build a mesh's vertex/index buffers and its render pipeline.
-///
-/// `blend` selects alpha blending (transparent) vs. `None` (opaque), and
-/// `depth_write` controls whether the pass writes to the depth buffer.
-#[allow(clippy::too_many_arguments)]
-fn create_drawable(
+/// Build a mesh's vertex/index buffers and upload them to the GPU.
+fn create_mesh_buffers(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    shader: &wgpu::ShaderModule,
-    pipeline_layout: &wgpu::PipelineLayout,
-    format: wgpu::TextureFormat,
-    blend: Option<wgpu::BlendState>,
-    depth_write: bool,
     mesh: &MeshData,
-) -> Drawable {
+) -> (wgpu::Buffer, wgpu::Buffer, u32) {
     let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("vertex"),
         size: (std::mem::size_of::<Vertex>() * mesh.vertices.len()) as u64,
@@ -414,6 +559,26 @@ fn create_drawable(
         mapped_at_creation: false,
     });
     queue.write_buffer(&index_buffer, 0, bytemuck::cast_slice(&mesh.indices));
+    (vertex_buffer, index_buffer, mesh.indices.len() as u32)
+}
+
+/// Build a mesh's render pipeline (buffers are created separately so they can
+/// be rebuilt after an edit without recreating the pipeline).
+///
+/// `blend` selects alpha blending (transparent) vs. `None` (opaque), and
+/// `depth_write` controls whether the pass writes to the depth buffer.
+#[allow(clippy::too_many_arguments)]
+fn create_drawable(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    shader: &wgpu::ShaderModule,
+    pipeline_layout: &wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    blend: Option<wgpu::BlendState>,
+    depth_write: bool,
+    mesh: &MeshData,
+) -> Drawable {
+    let (vertex_buffer, index_buffer, index_count) = create_mesh_buffers(device, queue, mesh);
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("pipeline"),
@@ -458,7 +623,7 @@ fn create_drawable(
         pipeline,
         vertex_buffer,
         index_buffer,
-        index_count: mesh.indices.len() as u32,
+        index_count,
     }
 }
 
@@ -480,6 +645,76 @@ fn create_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Te
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
+/// Mesh every chunk in the world into combined opaque + transparent meshes.
+fn mesh_world(
+    world: &World,
+    face_textures: &HashMap<BlockState, FaceTextures>,
+    uv: &HashMap<String, [f32; 4]>,
+) -> (MeshData, MeshData) {
+    let mut opaque = MeshData::new();
+    let mut transparent = MeshData::new();
+    for chunk in world.chunks() {
+        let (o, t) = mesh::build_chunk_meshes(world, chunk, face_textures, uv);
+        let obase = opaque.vertices.len() as u32;
+        opaque.vertices.extend(o.vertices);
+        opaque.indices.extend(o.indices.iter().map(|i| obase + i));
+        let tbase = transparent.vertices.len() as u32;
+        transparent.vertices.extend(t.vertices);
+        transparent.indices.extend(t.indices.iter().map(|i| tbase + i));
+    }
+    (opaque, transparent)
+}
+
+/// The 24 static line-list vertices of a unit cube (`0..1`), transformed by the
+/// per-frame outline model matrix. Written once; never updated per frame.
+fn unit_cube_outline() -> [LineVertex; 24] {
+    let c: [[f32; 3]; 8] = [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [1.0, 0.0, 1.0],
+        [0.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0],
+    ];
+    const EDGES: [(usize, usize); 12] = [
+        (0, 1),
+        (0, 2),
+        (1, 3),
+        (2, 3),
+        (4, 5),
+        (4, 6),
+        (5, 7),
+        (6, 7),
+        (0, 4),
+        (1, 5),
+        (2, 6),
+        (3, 7),
+    ];
+    let mut out = [LineVertex { position: [0.0; 3] }; 24];
+    for (i, (a, b)) in EDGES.iter().enumerate() {
+        out[i * 2] = LineVertex { position: c[*a] };
+        out[i * 2 + 1] = LineVertex { position: c[*b] };
+    }
+    out
+}
+
+/// The model matrix that maps the unit-cube outline onto the collision box of
+/// the block at `pos`, slightly expanded so the lines don't z-fight the faces.
+fn outline_model_matrix(world: &World, pos: [i32; 3]) -> Option<[[f32; 4]; 4]> {
+    let state = world.get_block(pos[0], pos[1], pos[2]);
+    let (bmin, bmax) = block_def(state).collision_box()?;
+    let base = Vec3::new(pos[0] as f32, pos[1] as f32, pos[2] as f32);
+    let e = 0.002;
+    let min = base + bmin - Vec3::splat(e);
+    let max = base + bmax + Vec3::splat(e);
+    Some(
+        Mat4::from_scale_rotation_translation(max - min, Quat::IDENTITY, min)
+            .to_cols_array_2d(),
+    )
+}
+
 /// The renderer state: surface/device, the authoritative simulation, and input.
 struct State {
     window: Arc<Window>,
@@ -492,6 +727,14 @@ struct State {
     intent: PlayerIntent,
     cursor_captured: bool,
     keys: HashSet<KeyCode>,
+    mouse_buttons: HashSet<MouseButton>,
+    /// Current raycast target (block coords + face normal), for highlight/edit.
+    target: Option<([i32; 3], [i32; 3])>,
+    /// Texture data retained so the mesh can be rebuilt after an edit.
+    face_textures: HashMap<BlockState, FaceTextures>,
+    uv: HashMap<String, [f32; 4]>,
+    /// Sum of chunk revisions, used to detect edits that need a re-mesh.
+    world_revision: u64,
     last_time: Instant,
     accumulator: f32,
     frames: u64,
@@ -540,17 +783,7 @@ impl State {
                 }
             };
         let world = fixture::building_yard();
-        let mut opaque = MeshData::new();
-        let mut transparent = MeshData::new();
-        for chunk in world.chunks() {
-            let (o, t) = mesh::build_chunk_meshes(&world, chunk, &face_textures, &uv);
-            let obase = opaque.vertices.len() as u32;
-            opaque.vertices.extend(o.vertices);
-            opaque.indices.extend(o.indices.iter().map(|i| obase + i));
-            let tbase = transparent.vertices.len() as u32;
-            transparent.vertices.extend(t.vertices);
-            transparent.indices.extend(t.indices.iter().map(|i| tbase + i));
-        }
+        let (opaque, transparent) = mesh_world(&world, &face_textures, &uv);
         println!(
             "opaque mesh: {} vertices, {} triangles",
             opaque.vertices.len(),
@@ -576,6 +809,7 @@ impl State {
         // Authoritative simulation, same spawn as the Bevy adapter.
         let player = Player::new(Vec3::new(8.0, 5.5, 16.0), 0.5, -0.25);
         let sim = Simulation::new(world, player);
+        let world_revision: u64 = sim.world.chunks().map(|c| c.revision).sum();
 
         State {
             window,
@@ -588,6 +822,11 @@ impl State {
             intent: PlayerIntent::default(),
             cursor_captured: false,
             keys: HashSet::new(),
+            mouse_buttons: HashSet::new(),
+            target: None,
+            face_textures,
+            uv,
+            world_revision,
             last_time: Instant::now(),
             accumulator: 0.0,
             frames: 0,
@@ -604,6 +843,13 @@ impl State {
         self.surface.configure(&self.device, &self.config);
         if let Some(r) = &mut self.renderer {
             r.resize(&self.device, size.width, size.height);
+        }
+    }
+
+    fn rebuild_mesh(&mut self) {
+        let (opaque, transparent) = mesh_world(&self.sim.world, &self.face_textures, &self.uv);
+        if let Some(r) = self.renderer.as_mut() {
+            r.rebuild_meshes(&self.device, &self.queue, &opaque, &transparent);
         }
     }
 
@@ -627,16 +873,8 @@ impl State {
         }
         self.intent.move_axis = move_axis.normalize_or_zero();
         self.intent.jump = self.keys.contains(&KeyCode::Space);
-        while self.accumulator >= FIXED_DT {
-            self.sim.step(&self.intent, FIXED_DT);
-            self.accumulator -= FIXED_DT;
-        }
 
-        // Interpolate the camera between the previous and current fixed-tick
-        // positions for smooth motion.
-        let alpha = (self.accumulator / FIXED_DT).min(1.0);
-        let pos = self.sim.prev_pos.lerp(self.sim.player.pos, alpha);
-        let eye = pos + Vec3::new(0.0, PLAYER_EYE_HEIGHT - PLAYER_HEIGHT * 0.5, 0.0);
+        // Look direction (rotation is authoritative, not interpolated).
         let rot = Quat::from_euler(
             glam::EulerRot::ZYX,
             0.0,
@@ -644,6 +882,47 @@ impl State {
             self.sim.player.pitch,
         );
         let forward = rot * Vec3::NEG_Z;
+
+        // Raycast from the authoritative eye (matches the Bevy adapter), then
+        // map held mouse buttons to a break/place action.
+        let eye = self.sim.player.eye_pos();
+        self.target = physics::raycast(&self.sim.world, eye, forward, REACH);
+        self.intent.block_action = if self.cursor_captured {
+            match self.target {
+                Some((pos, _face)) if self.mouse_buttons.contains(&MouseButton::Left) => {
+                    Some(BlockAction::Break(pos))
+                }
+                Some((pos, face)) if self.mouse_buttons.contains(&MouseButton::Right) => {
+                    Some(BlockAction::Place([
+                        pos[0] + face[0],
+                        pos[1] + face[1],
+                        pos[2] + face[2],
+                    ]))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        while self.accumulator >= FIXED_DT {
+            self.sim.step(&self.intent, FIXED_DT);
+            self.accumulator -= FIXED_DT;
+        }
+        self.intent.block_action = None;
+
+        // Re-mesh if any chunk revision changed (a block edit landed).
+        let revision: u64 = self.sim.world.chunks().map(|c| c.revision).sum();
+        if revision != self.world_revision {
+            self.world_revision = revision;
+            self.rebuild_mesh();
+        }
+
+        // Interpolate the camera between the previous and current fixed-tick
+        // positions for smooth motion.
+        let alpha = (self.accumulator / FIXED_DT).min(1.0);
+        let pos = self.sim.prev_pos.lerp(self.sim.player.pos, alpha);
+        let eye = pos + Vec3::new(0.0, PLAYER_EYE_HEIGHT - PLAYER_HEIGHT * 0.5, 0.0);
         let up = rot * Vec3::Y;
         let view = glam::camera::rh::view::look_to_mat4(eye, forward, up);
         let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
@@ -655,6 +934,11 @@ impl State {
         );
         let uniform = CameraUniform {
             view_proj: (proj * view).to_cols_array_2d(),
+            outline_model: match self.target {
+                Some((pos, _face)) => outline_model_matrix(&self.sim.world, pos)
+                    .unwrap_or(Mat4::IDENTITY.to_cols_array_2d()),
+                None => Mat4::IDENTITY.to_cols_array_2d(),
+            },
         };
 
         let surface_texture = match self.surface.get_current_texture() {
@@ -674,7 +958,7 @@ impl State {
                 0,
                 bytemuck::cast_slice(std::slice::from_ref(&uniform)),
             );
-            r.render(&self.device, &self.queue, &view_tex);
+            r.render(&self.device, &self.queue, &view_tex, self.target.is_some());
         }
         self.queue.present(surface_texture);
 
@@ -696,7 +980,7 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window = Arc::new(
             event_loop
-                .create_window(Window::default_attributes().with_title("Sunset Raw — M2"))
+                .create_window(Window::default_attributes().with_title("Sunset Raw — M4"))
                 .unwrap(),
         );
         let mut state = pollster::block_on(State::new(window));
@@ -732,15 +1016,24 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                button: MouseButton::Left,
+                state: button_state,
+                button,
                 ..
             } => {
                 if let Some(state) = &mut self.state {
-                    if !state.cursor_captured {
-                        let _ = state.window.set_cursor_grab(CursorGrabMode::Locked);
-                        state.window.set_cursor_visible(false);
-                        state.cursor_captured = true;
+                    match button_state {
+                        ElementState::Pressed => {
+                            state.mouse_buttons.insert(button);
+                            // Left-click re-captures the cursor when free.
+                            if button == MouseButton::Left && !state.cursor_captured {
+                                let _ = state.window.set_cursor_grab(CursorGrabMode::Locked);
+                                state.window.set_cursor_visible(false);
+                                state.cursor_captured = true;
+                            }
+                        }
+                        ElementState::Released => {
+                            state.mouse_buttons.remove(&button);
+                        }
                     }
                 }
             }
