@@ -1,7 +1,7 @@
 # Raw wgpu Renderer — Plan
 
 **Status:** M0–M5 complete; M6–M10 partial (per-deliverable status in §15);
-M11–M13 done; M14–M18 planned and unimplemented.
+M11–M17 done; M18 blocked on the not-yet-built M8 hierarchy.
 **Date:** 2026-11-08 (amended 2026-11-09 to add core optimizations; amended again to
 reconcile completion claims and add correctness-first work).
 
@@ -657,8 +657,8 @@ Bevy reference).
   scratch reuse, shared GPU arenas, reusable upload staging, and single-pass
   rendering. See M13, M16, M17.
 
-Correctness-first milestones, in dependency order (M11–M13 done, M14–M18
-unimplemented):
+Correctness-first milestones, in dependency order (M11–M17 done; M18 blocked on
+the not-yet-built M8 hierarchy):
 
 - **M11 — Correctness prerequisites.** *Done.* (§9.0) Surface-aware slab
   occlusion and outward +Y winding, with independent expected-geometry tests
@@ -669,18 +669,19 @@ unimplemented):
 - **M13 — Frame-loop dependency rules.** *Done.* (§13.1) The per-frame chunk
   revision scan is gated on edits; redundant uniform uploads are skipped; the
   transparent sort vector is reused.
-- **M14 — Border-summary invalidation.** (§9.1) Rebuild a chunk's four
-  horizontal neighbours only when a border summary actually changed; correct the
-  worker-result acceptance rule.
-- **M15 — Face descriptions + compact merge keys.** (§9.2) Precompute
-  per-state+face render facts; replace the per-cell mask payload with an
-  integer merge key; reuse scratch.
-- **M16 — Word-parallel full-cube meshing.** (§9.3) u32 occupancy/classification
-  rows, bitwise exposure, then greedy merge; shape-aware path for slabs.
-- **M17 — Single physical render pass.** (§7) Fold opaque + transparent +
-  outline into one `wgpu::RenderPass` with pipeline switches.
-- **M18 — Plane masking + temporal ordering.** (§11.1) Extend the M8 hierarchy
-  with a six-bit plane mask and last-rejecting-plane hint.
+- **M14 — Border-summary invalidation.** *Done.* (§9.1) Edit-coordinate
+  invalidation with an occlusion key: a neighbour is rebuilt only when the edit
+  touches its border and the occlusion it reads changed.
+- **M15 — Face descriptions + compact merge keys.** *Done.* (§9.2) A
+  precomputed `FaceTable` replaces per-cell string/atlas lookups; the mask
+  payload is now a compact block-state merge key.
+- **M16 — Word-parallel full-cube meshing.** *Done.* (§9.3) Opaque full cubes
+  are meshed via `u32` occupancy rows and bitwise exposure; glass/slabs keep the
+  shape-aware path.
+- **M17 — Single physical render pass.** *Done.* (§7) Opaque + transparent +
+  outline folded into one `wgpu::RenderPass`.
+- **M18 — Plane masking + temporal ordering.** (§11.1) *Blocked* — requires the
+  M8 hierarchical frustum, which is still deferred to the dense-world case.
 
 **Sequencing rule:** baseline correction (M12) and geometry correctness (M11)
 come first — both gate every later "faster" claim. Small frame-loop (M13) and
@@ -853,8 +854,8 @@ optimization work. What changed and why:
   compact geometry, batching, and visibility remain in §9–§13; their status is
   clarified in §15 rather than restated.
 
-The amendment itself made no code changes. M11–M13 were subsequently
-implemented and M14–M18 remain unimplemented (see §15 statuses).
+The amendment itself made no code changes. M11–M17 were subsequently
+implemented; M18 remains blocked on the M8 hierarchy (see §15 statuses).
 
 
 
