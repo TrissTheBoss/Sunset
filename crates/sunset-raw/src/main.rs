@@ -5,7 +5,7 @@
 mod assets;
 mod mesh;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -34,6 +34,10 @@ const SENSITIVITY: f32 = 0.0025;
 const FIXED_DT: f32 = 1.0 / 20.0;
 /// Block interaction reach distance (blocks).
 const REACH: f32 = 5.0;
+/// Number of recent frame durations kept for average / 0.1%-low FPS.
+const FRAME_WINDOW: usize = 1000;
+/// Warm-up seconds before benchmark frame times are recorded.
+const WARMUP_SECS: f32 = 2.0;
 
 /// Per-frame camera data: the world view-projection plus the outline's model
 /// matrix (the outline is a static unit cube scaled/translated per frame).
@@ -42,6 +46,78 @@ const REACH: f32 = 5.0;
 struct CameraUniform {
     view_proj: [[f32; 4]; 4],
     outline_model: [[f32; 4]; 4],
+}
+
+/// Rolling window of frame durations used to report average and 0.1%-low FPS
+/// (mirrors the Bevy adapter's `hud::FrameStats`).
+struct FrameStats {
+    times: VecDeque<f32>,
+}
+
+impl FrameStats {
+    fn new() -> Self {
+        Self {
+            times: VecDeque::with_capacity(FRAME_WINDOW),
+        }
+    }
+
+    fn record(&mut self, dt: f32) {
+        if dt > 0.0 && dt.is_finite() {
+            self.times.push_back(dt);
+            if self.times.len() > FRAME_WINDOW {
+                self.times.pop_front();
+            }
+        }
+    }
+
+    /// Average FPS over the window (frames divided by total time).
+    fn average_fps(&self) -> Option<f32> {
+        let n = self.times.len();
+        if n == 0 {
+            return None;
+        }
+        let total: f32 = self.times.iter().sum();
+        if total <= 0.0 {
+            return None;
+        }
+        Some(n as f32 / total)
+    }
+
+    /// 0.1%-low FPS: `1 / (99.9th-percentile frame time)`.
+    fn low_01_fps(&self) -> Option<f32> {
+        let n = self.times.len();
+        if n == 0 {
+            return None;
+        }
+        let mut sorted: Vec<f32> = self.times.iter().copied().collect();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let idx = ((n as f32 * 0.999).ceil() as usize)
+            .saturating_sub(1)
+            .min(n - 1);
+        let dt = sorted[idx];
+        if dt <= 0.0 {
+            return None;
+        }
+        Some(1.0 / dt)
+    }
+}
+
+/// Average + 0.1%-low FPS over an arbitrary frame-time slice (benchmark window).
+fn summarize(times: &[f32]) -> Option<(f32, f32)> {
+    let n = times.len();
+    if n == 0 {
+        return None;
+    }
+    let total: f32 = times.iter().sum();
+    if total <= 0.0 {
+        return None;
+    }
+    let mut sorted = times.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let idx = ((n as f32 * 0.999).ceil() as usize)
+        .saturating_sub(1)
+        .min(n - 1);
+    Some((n as f32 / total, 1.0 / sorted[idx]))
 }
 
 /// The interleaved vertex layout: position(f32x3) + uv(f32x2) + color(f32x4).
@@ -739,6 +815,14 @@ struct State {
     accumulator: f32,
     frames: u64,
     last_log: Instant,
+    stats: FrameStats,
+    /// App start time, used to time the benchmark warm-up window.
+    start: Instant,
+    /// Benchmark duration in seconds (from `SUNSET_BENCH_SECS`), if set.
+    bench_secs: Option<f32>,
+    /// Set once warm-up completes; frame times after this point are recorded.
+    bench_start: Option<Instant>,
+    bench_times: Vec<f32>,
 }
 
 impl State {
@@ -810,6 +894,9 @@ impl State {
         let player = Player::new(Vec3::new(8.0, 5.5, 16.0), 0.5, -0.25);
         let sim = Simulation::new(world, player);
         let world_revision: u64 = sim.world.chunks().map(|c| c.revision).sum();
+        let bench_secs = std::env::var("SUNSET_BENCH_SECS")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok());
 
         State {
             window,
@@ -831,6 +918,11 @@ impl State {
             accumulator: 0.0,
             frames: 0,
             last_log: Instant::now(),
+            stats: FrameStats::new(),
+            start: Instant::now(),
+            bench_secs,
+            bench_start: None,
+            bench_times: Vec::new(),
         }
     }
 
@@ -853,11 +945,23 @@ impl State {
         }
     }
 
-    fn render(&mut self) {
+    fn render(&mut self) -> bool {
         // Step the authoritative simulation at a fixed 20 Hz.
         let now = Instant::now();
-        self.accumulator += (now - self.last_time).as_secs_f32().min(0.1);
+        let dt = (now - self.last_time).as_secs_f32();
         self.last_time = now;
+        self.stats.record(dt);
+        if self.bench_secs.is_some() {
+            match self.bench_start {
+                None => {
+                    if now.duration_since(self.start).as_secs_f32() >= WARMUP_SECS {
+                        self.bench_start = Some(now);
+                    }
+                }
+                Some(_) => self.bench_times.push(dt),
+            }
+        }
+        self.accumulator += dt.min(0.1);
         let mut move_axis = Vec2::ZERO;
         if self.keys.contains(&KeyCode::KeyW) {
             move_axis.y += 1.0;
@@ -946,7 +1050,7 @@ impl State {
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             _ => {
                 self.surface.configure(&self.device, &self.config);
-                return;
+                return false;
             }
         };
         let view_tex = surface_texture
@@ -965,10 +1069,36 @@ impl State {
         self.frames += 1;
         if self.last_log.elapsed().as_secs_f64() >= 1.0 {
             let fps = self.frames as f64 / self.last_log.elapsed().as_secs_f64();
-            println!("FPS: {fps:.1}");
+            let avg = self
+                .stats
+                .average_fps()
+                .map(|v| format!("{v:.1}"))
+                .unwrap_or_else(|| "n/a".into());
+            let low = self
+                .stats
+                .low_01_fps()
+                .map(|v| format!("{v:.1}"))
+                .unwrap_or_else(|| "n/a".into());
+            println!("FPS: {fps:.1} | avg: {avg} | 0.1% low: {low}");
             self.frames = 0;
             self.last_log = Instant::now();
         }
+
+        // Benchmark completion: after the measured window, print a summary and
+        // signal the event loop to exit.
+        if let (Some(start), Some(secs)) = (self.bench_start, self.bench_secs) {
+            if start.elapsed().as_secs_f32() >= secs {
+                if let Some((avg, low)) = summarize(&self.bench_times) {
+                    println!(
+                        "BENCH_RESULT avg={avg:.1} 0.1%low={low:.1} frames={}",
+                        self.bench_times.len()
+                    );
+                }
+                self.bench_start = None;
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -1055,9 +1185,11 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(state) = &mut self.state {
-            state.render();
+            if state.render() {
+                event_loop.exit();
+            }
         }
     }
 }

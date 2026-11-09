@@ -82,6 +82,7 @@ fn main() {
                 renderer::outline_system,
                 renderer::remesh_system,
                 hud::update_hud,
+                hud::log_frame_stats,
                 save_system,
                 toggle_fullscreen,
             ),

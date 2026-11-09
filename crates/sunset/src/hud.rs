@@ -39,7 +39,7 @@ impl FrameStats {
     }
 
     /// Average FPS over the window (frames divided by total time).
-    fn average_fps(&self) -> Option<f32> {
+    pub(crate) fn average_fps(&self) -> Option<f32> {
         let n = self.times.len();
         if n == 0 {
             return None;
@@ -52,7 +52,7 @@ impl FrameStats {
     }
 
     /// 0.1%-low FPS: `1 / (99.9th-percentile frame time)`.
-    fn low_01_fps(&self) -> Option<f32> {
+    pub(crate) fn low_01_fps(&self) -> Option<f32> {
         let n = self.times.len();
         if n == 0 {
             return None;
@@ -67,6 +67,25 @@ impl FrameStats {
             return None;
         }
         Some(1.0 / dt)
+    }
+}
+
+/// Log average and 0.1%-low FPS to stdout once per second, for benchmarking
+/// (M5). Mirrors the on-screen HUD values so the frame rate can be captured
+/// from a headless run's stdout.
+pub fn log_frame_stats(stats: Res<FrameStats>, time: Res<Time>, mut acc: Local<f32>) {
+    *acc += time.delta_secs();
+    if *acc >= 1.0 {
+        *acc = 0.0;
+        let avg = stats
+            .average_fps()
+            .map(|v| format!("{v:.1}"))
+            .unwrap_or_else(|| "n/a".into());
+        let low = stats
+            .low_01_fps()
+            .map(|v| format!("{v:.1}"))
+            .unwrap_or_else(|| "n/a".into());
+        info!("FPS_STATS avg={avg} 0.1%low={low}");
     }
 }
 
