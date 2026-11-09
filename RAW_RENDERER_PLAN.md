@@ -1,6 +1,6 @@
 # Raw wgpu Renderer — Plan
 
-**Status:** M0 implemented and measured; M1+ planned.
+**Status:** M0–M4 implemented and measured; M5+ planned (M5 = benchmark, M6+ = optimizations).
 **Date:** 2026-11-08 (amended to add core renderer optimizations).
 
 This plan describes a minimal, custom raw renderer that escapes the fixed
