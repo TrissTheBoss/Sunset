@@ -6,11 +6,67 @@ use std::collections::HashMap;
 
 use glam::Vec3;
 
-use sunset_core::block::{block_def, is_transparent, occludes, BlockState, Shape, AIR};
+use sunset_core::block::{block_def, is_transparent, occludes, BlockState, Shape, AIR, BLOCKS};
 use sunset_core::chunk::{Chunk, CHUNK_HEIGHT, CHUNK_SIZE};
 use sunset_core::world::World;
 
 use crate::assets::FaceTextures;
+
+/// Resolved per-(block, face) render facts, precomputed once after assets load
+/// (M15). Removes string-keyed texture/atlas lookups from the mesher's inner
+/// loops.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FaceDesc {
+    /// Atlas rect (normalized 0..1) when textured, else `None` (use `color`).
+    pub rect: Option<[f32; 4]>,
+    /// Vertex colour (face-shaded), RGBA 0..1.
+    pub color: [f32; 4],
+}
+
+/// A renderer-owned face-description table indexed by block state then face.
+pub struct FaceTable {
+    descs: Vec<[FaceDesc; 6]>,
+}
+
+impl FaceTable {
+    /// Build the table from resolved face textures and atlas UVs.
+    pub fn build(
+        face_textures: &HashMap<BlockState, FaceTextures>,
+        uv: &HashMap<String, [f32; 4]>,
+    ) -> Self {
+        let mut descs = vec![[FaceDesc { rect: None, color: [0.0; 4] }; 6]; BLOCKS.len()];
+        for (state, def) in BLOCKS.iter().enumerate() {
+            for face in 0..6 {
+                let normal = FACE_NORMALS[face];
+                let shade = FACE_SHADE[face];
+                let rect = face_textures
+                    .get(&(state as BlockState))
+                    .and_then(|ft| ft.texture_for_face(normal, def.end_axis))
+                    .and_then(|tex| uv.get(tex).copied());
+                let color = match rect {
+                    Some(_) => [shade, shade, shade, 1.0],
+                    None => {
+                        let fc = def.face_color(normal);
+                        let alpha = if is_transparent(state as BlockState) { 0.45 } else { 1.0 };
+                        [
+                            fc[0] as f32 / 255.0 * shade,
+                            fc[1] as f32 / 255.0 * shade,
+                            fc[2] as f32 / 255.0 * shade,
+                            alpha,
+                        ]
+                    }
+                };
+                descs[state][face] = FaceDesc { rect, color };
+            }
+        }
+        Self { descs }
+    }
+
+    #[inline]
+    pub fn get(&self, state: BlockState, face: usize) -> FaceDesc {
+        self.descs[state as usize][face]
+    }
+}
 
 /// A single interleaved vertex: position, tiled UV, face shade/color, and the
 /// texture's atlas rect (wrapped by `fract` in the fragment shader so merged
@@ -227,8 +283,7 @@ fn face_visible(
 fn greedy_face(
     world: &World,
     chunk: &Chunk,
-    face_textures: &HashMap<BlockState, FaceTextures>,
-    uv: &HashMap<String, [f32; 4]>,
+    face_table: &FaceTable,
     base_x: i32,
     base_z: i32,
     face: usize,
@@ -236,14 +291,15 @@ fn greedy_face(
     transparent: &mut MeshData,
 ) {
     let [nx, ny, nz] = FACE_NORMALS[face];
-    let shade = FACE_SHADE[face];
     let (na, ta, tb) = FACE_AXES[face];
     let n_dim = if na == 1 { CHUNK_HEIGHT } else { CHUNK_SIZE };
     let a_dim = if ta == 1 { CHUNK_HEIGHT } else { CHUNK_SIZE };
     let b_dim = if tb == 1 { CHUNK_HEIGHT } else { CHUNK_SIZE };
 
     for plane in 0..n_dim {
-        let mut mask: Vec<Option<(BlockState, Option<[f32; 4]>)>> = vec![None; a_dim * b_dim];
+        // The mask holds a compact merge key (the block state): two cells merge
+        // only when their states match, never merely because textures match.
+        let mut mask: Vec<Option<BlockState>> = vec![None; a_dim * b_dim];
         for a in 0..a_dim {
             for b in 0..b_dim {
                 let mut c = [0usize; 3];
@@ -267,11 +323,7 @@ fn greedy_face(
                 if !face_visible(state, neighbor, [nx, ny, nz], Vec3::ZERO, Vec3::ONE) {
                     continue;
                 }
-                let rect = face_textures
-                    .get(&state)
-                    .and_then(|ft| ft.texture_for_face([nx, ny, nz], def.end_axis))
-                    .and_then(|tex| uv.get(tex).copied());
-                mask[a * b_dim + b] = Some((state, rect));
+                mask[a * b_dim + b] = Some(state);
             }
         }
 
@@ -282,15 +334,14 @@ fn greedy_face(
                 if visited[idx] {
                     continue;
                 }
-                let Some(cell) = mask[idx] else {
+                let Some(state) = mask[idx] else {
                     continue;
                 };
-                let (state, rect) = cell;
 
                 let mut w = 1;
                 while a + w < a_dim
                     && !visited[(a + w) * b_dim + b]
-                    && mask[(a + w) * b_dim + b] == Some(cell)
+                    && mask[(a + w) * b_dim + b] == Some(state)
                 {
                     w += 1;
                 }
@@ -298,7 +349,7 @@ fn greedy_face(
                 'grow: while b + h < b_dim {
                     for da in 0..w {
                         if visited[(a + da) * b_dim + (b + h)]
-                            || mask[(a + da) * b_dim + (b + h)] != Some(cell)
+                            || mask[(a + da) * b_dim + (b + h)] != Some(state)
                         {
                             break 'grow;
                         }
@@ -311,7 +362,6 @@ fn greedy_face(
                     }
                 }
 
-                let def = block_def(state);
                 let target = if is_transparent(state) {
                     &mut *transparent
                 } else {
@@ -335,27 +385,16 @@ fn greedy_face(
                 mx[2] += base_z as f32;
                 let corners = face_corners(Vec3::from_array(mn), Vec3::from_array(mx), face);
 
-                if let Some(rect) = rect {
+                let desc = face_table.get(state, face);
+                if let Some(rect) = desc.rect {
                     // Tiled UV (w x h tiles); the shader wraps it into `rect`.
                     let uvs = [0usize, 1, 2, 3].map(|i| {
                         let [u, v] = FACE_UVS[face][i];
                         [u * w as f32, v * h as f32]
                     });
-                    target.add_face(corners, uvs, [shade, shade, shade, 1.0], rect);
+                    target.add_face(corners, uvs, desc.color, rect);
                 } else {
-                    let fc = def.face_color(FACE_NORMALS[face]);
-                    let alpha = if is_transparent(state) { 0.45 } else { 1.0 };
-                    target.add_face(
-                        corners,
-                        [[0.0, 0.0]; 4],
-                        [
-                            fc[0] as f32 / 255.0 * shade,
-                            fc[1] as f32 / 255.0 * shade,
-                            fc[2] as f32 / 255.0 * shade,
-                            alpha,
-                        ],
-                        [0.0, 0.0, 1.0, 1.0],
-                    );
+                    target.add_face(corners, [[0.0, 0.0]; 4], desc.color, [0.0, 0.0, 1.0, 1.0]);
                 }
             }
         }
@@ -366,8 +405,7 @@ fn greedy_face(
 pub fn build_chunk_meshes(
     world: &World,
     chunk: &Chunk,
-    face_textures: &HashMap<BlockState, FaceTextures>,
-    uv: &HashMap<String, [f32; 4]>,
+    face_table: &FaceTable,
 ) -> (MeshData, MeshData) {
     let mut opaque = MeshData::new();
     let mut transparent = MeshData::new();
@@ -380,8 +418,7 @@ pub fn build_chunk_meshes(
         greedy_face(
             world,
             chunk,
-            face_textures,
-            uv,
+            face_table,
             base_x,
             base_z,
             face,
@@ -420,7 +457,6 @@ pub fn build_chunk_meshes(
                     if !face_visible(state, neighbor, [nx, ny, nz], bmin, bmax) {
                         continue;
                     }
-                    let shade = FACE_SHADE[face];
                     let corners = face_corners(
                         Vec3::new(
                             x as f32 + bmin.x + base_x as f32,
@@ -435,37 +471,19 @@ pub fn build_chunk_meshes(
                         face,
                     );
 
-                    let mut textured = false;
-                    if let Some(ft) = face_textures.get(&state) {
-                        if let Some(tex) = ft.texture_for_face([nx, ny, nz], def.end_axis) {
-                            if let Some(&rect) = uv.get(tex) {
-                                let uvs = FACE_UVS[face].map(|[u, v]| {
-                                    let v = match def.shape {
-                                        Shape::SlabBottom if face >= 2 => 0.5 + 0.5 * v,
-                                        Shape::SlabTop if face >= 2 => 0.5 * v,
-                                        _ => v,
-                                    };
-                                    [u, v]
-                                });
-                                target.add_face(corners, uvs, [shade, shade, shade, 1.0], rect);
-                                textured = true;
-                            }
-                        }
-                    }
-                    if !textured {
-                        let fc = def.face_color([nx, ny, nz]);
-                        let alpha = if is_transparent(state) { 0.45 } else { 1.0 };
-                        target.add_face(
-                            corners,
-                            [[0.0, 0.0]; 4],
-                            [
-                                fc[0] as f32 / 255.0 * shade,
-                                fc[1] as f32 / 255.0 * shade,
-                                fc[2] as f32 / 255.0 * shade,
-                                alpha,
-                            ],
-                            [0.0, 0.0, 1.0, 1.0],
-                        );
+                    let desc = face_table.get(state, face);
+                    if let Some(rect) = desc.rect {
+                        let uvs = FACE_UVS[face].map(|[u, v]| {
+                            let v = match def.shape {
+                                Shape::SlabBottom if face >= 2 => 0.5 + 0.5 * v,
+                                Shape::SlabTop if face >= 2 => 0.5 * v,
+                                _ => v,
+                            };
+                            [u, v]
+                        });
+                        target.add_face(corners, uvs, desc.color, rect);
+                    } else {
+                        target.add_face(corners, [[0.0, 0.0]; 4], desc.color, [0.0, 0.0, 1.0, 1.0]);
                     }
                 }
             }
@@ -495,8 +513,7 @@ mod tests {
     /// same meshes as a full rebuild of every chunk.
     #[test]
     fn boundary_edit_matches_full_rebuild() {
-        let face_textures: HashMap<BlockState, FaceTextures> = HashMap::new();
-        let uv: HashMap<String, [f32; 4]> = HashMap::new();
+        let face_table = FaceTable::build(&HashMap::new(), &HashMap::new());
 
         let mut world = fixture::building_yard();
 
@@ -505,7 +522,7 @@ mod tests {
         for chunk in world.chunks() {
             incremental.insert(
                 (chunk.cx, chunk.cz),
-                build_chunk_meshes(&world, chunk, &face_textures, &uv),
+                build_chunk_meshes(&world, chunk, &face_table),
             );
         }
 
@@ -532,7 +549,7 @@ mod tests {
             if let Some(chunk) = world.get_chunk(cx, cz) {
                 incremental.insert(
                     (cx, cz),
-                    build_chunk_meshes(&world, chunk, &face_textures, &uv),
+                    build_chunk_meshes(&world, chunk, &face_table),
                 );
             }
         }
@@ -542,7 +559,7 @@ mod tests {
         for chunk in world.chunks() {
             full.insert(
                 (chunk.cx, chunk.cz),
-                build_chunk_meshes(&world, chunk, &face_textures, &uv),
+                build_chunk_meshes(&world, chunk, &face_table),
             );
         }
 
@@ -596,10 +613,9 @@ mod tests {
 
     /// Mesh one chunk of a small authored world (no textures/atlas).
     fn mesh_world(world: &World, cx: i32, cz: i32) -> (MeshData, MeshData) {
-        let face_textures: HashMap<BlockState, FaceTextures> = HashMap::new();
-        let uv: HashMap<String, [f32; 4]> = HashMap::new();
+        let face_table = FaceTable::build(&HashMap::new(), &HashMap::new());
         let chunk = world.get_chunk(cx, cz).expect("chunk exists");
-        build_chunk_meshes(world, chunk, &face_textures, &uv)
+        build_chunk_meshes(world, chunk, &face_table)
     }
 
     #[test]

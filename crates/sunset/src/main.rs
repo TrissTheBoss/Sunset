@@ -29,8 +29,7 @@ use sunset_core::save;
 use sunset_core::simulation::Simulation;
 use sunset_core::world::World;
 
-use assets::FaceTextures;
-use mesh::{MeshData, Vertex};
+use mesh::{FaceTable, MeshData, Vertex};
 
 /// Look sensitivity in radians per pixel of mouse motion.
 const SENSITIVITY: f32 = 0.0025;
@@ -1031,9 +1030,8 @@ struct State {
     mouse_buttons: HashSet<MouseButton>,
     /// Current raycast target (block coords + face normal), for highlight/edit.
     target: Option<([i32; 3], [i32; 3])>,
-    /// Texture data retained so the mesh can be rebuilt after an edit.
-    face_textures: HashMap<BlockState, FaceTextures>,
-    uv: HashMap<String, [f32; 4]>,
+    /// Precomputed per-(block, face) render facts, used for re-meshing (M15).
+    face_table: FaceTable,
     last_time: Instant,
     accumulator: f32,
     frames: u64,
@@ -1098,14 +1096,14 @@ impl State {
                     (HashMap::new(), HashMap::new(), image::RgbaImage::new(0, 0))
                 }
             };
+        let face_table = FaceTable::build(&face_textures, &uv);
         let (world, player) = load_or_generate();
 
         // Build per-chunk meshes (never a single combined world mesh, so an
         // edit can re-mesh just the affected chunk and its neighbours).
         let mut chunk_meshes: HashMap<(i32, i32), ChunkMesh> = HashMap::new();
         for chunk in world.chunks() {
-            let (opaque, transparent) =
-                mesh::build_chunk_meshes(&world, chunk, &face_textures, &uv);
+            let (opaque, transparent) = mesh::build_chunk_meshes(&world, chunk, &face_table);
             chunk_meshes.insert((chunk.cx, chunk.cz), ChunkMesh { opaque, transparent });
         }
         let opaque_verts: usize = chunk_meshes.values().map(|c| c.opaque.vertices.len()).sum();
@@ -1151,8 +1149,7 @@ impl State {
             keys: HashSet::new(),
             mouse_buttons: HashSet::new(),
             target: None,
-            face_textures,
-            uv,
+            face_table,
             last_time: Instant::now(),
             accumulator: 0.0,
             frames: 0,
@@ -1199,7 +1196,7 @@ impl State {
             return;
         };
         let (opaque, transparent) =
-            mesh::build_chunk_meshes(&self.sim.world, chunk, &self.face_textures, &self.uv);
+            mesh::build_chunk_meshes(&self.sim.world, chunk, &self.face_table);
         let mesh = ChunkMesh { opaque, transparent };
         if let Some(r) = self.renderer.as_mut() {
             r.update_chunk(&self.device, &self.queue, cx, cz, &mesh);
