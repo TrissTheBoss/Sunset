@@ -6,6 +6,7 @@
 mod assets;
 mod mesh;
 mod ui;
+mod widgets;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
@@ -1032,6 +1033,8 @@ struct State {
     slots: Vec<(f32, f32)>,
     /// Cursor position in physical screen pixels (for UI hit-testing).
     mouse_pos: (f32, f32),
+    /// Set when a widget requests quitting; exits the event loop next frame.
+    quit: bool,
 }
 
 /// Where a clicked container-slot index points.
@@ -1077,7 +1080,8 @@ impl State {
         surface.configure(&device, &config);
 
         // Load the world + atlas + mesh + UI assets.
-        let loaded = assets::find_minecraft_dir().and_then(|d| assets::load_assets(&d).ok());
+        let loaded = assets::find_minecraft_dir()
+            .and_then(|d| assets::load_assets(&d, &widgets::custom_textures()).ok());
         let (face_textures, uv, atlas) = match &loaded {
             Some(l) => (l.face_textures.clone(), l.uv.clone(), l.atlas.clone()),
             None => {
@@ -1169,6 +1173,7 @@ impl State {
             cursor: ItemStack::EMPTY,
             slots: Vec::new(),
             mouse_pos: (0.0, 0.0),
+            quit: false,
         }
     }
 
@@ -1396,6 +1401,8 @@ impl State {
                 );
             }
         }
+        // Registered widgets (buttons etc.) draw on top of the HUD and screens.
+        widgets::draw_widgets(&mut b, assets, screen, self.mouse_pos);
         Some(b)
     }
 
@@ -1425,7 +1432,31 @@ impl State {
         }
     }
 
+    /// Apply the effects a widget callback requested.
+    fn apply_ui_context(&mut self, ctx: widgets::UiContext) {
+        if ctx.quit {
+            self.quit = true;
+        }
+        if ctx.toggle_fullscreen {
+            self.fullscreen = !self.fullscreen;
+            self.window.set_fullscreen(if self.fullscreen {
+                Some(Fullscreen::Borderless(None))
+            } else {
+                None
+            });
+        }
+        if let Some(screen) = ctx.open_screen {
+            self.open_screen(screen, None);
+        }
+        if ctx.close_screen {
+            self.close_screen();
+        }
+    }
+
     fn render(&mut self) -> bool {
+        if self.quit {
+            return true;
+        }
         // Step the authoritative simulation at a fixed 20 Hz.
         let now = Instant::now();
         let dt = (now - self.last_time).as_secs_f32();
@@ -1709,19 +1740,33 @@ impl ApplicationHandler for App {
                 if let Some(state) = &mut self.state {
                     match button_state {
                         ElementState::Pressed => {
-                            if state.screen != ui::Screen::None {
-                                let click = match button {
-                                    MouseButton::Left => Some(ui::Click::Left),
-                                    MouseButton::Right => Some(ui::Click::Right),
-                                    _ => None,
-                                };
-                                if let Some(click) = click {
-                                    state.click_slot_at(click);
+                            let mut handled = false;
+                            if button == MouseButton::Left {
+                                let screen = (state.config.width, state.config.height);
+                                if let Some(i) =
+                                    widgets::hit_widget(state.mouse_pos.0, state.mouse_pos.1, screen)
+                                {
+                                    let mut ctx = widgets::UiContext::default();
+                                    widgets::click_widget(i, &mut ctx);
+                                    state.apply_ui_context(ctx);
+                                    handled = true;
                                 }
-                            } else {
-                                state.mouse_buttons.insert(button);
-                                if button == MouseButton::Right {
-                                    state.try_open_container();
+                            }
+                            if !handled {
+                                if state.screen != ui::Screen::None {
+                                    let click = match button {
+                                        MouseButton::Left => Some(ui::Click::Left),
+                                        MouseButton::Right => Some(ui::Click::Right),
+                                        _ => None,
+                                    };
+                                    if let Some(click) = click {
+                                        state.click_slot_at(click);
+                                    }
+                                } else {
+                                    state.mouse_buttons.insert(button);
+                                    if button == MouseButton::Right {
+                                        state.try_open_container();
+                                    }
                                 }
                             }
                         }
@@ -1776,7 +1821,52 @@ impl ApplicationHandler for App {
     }
 }
 
+/// Register demo content that exercises the modular widget system: a custom
+/// button texture plus two buttons (fullscreen toggle and quit), placed in the
+/// top-left corner. This is development content, not a vanilla feature.
+fn setup_demo_ui() {
+    // A simple beveled button texture (normal + hover variants).
+    let (w, h) = (100u32, 20u32);
+    let mut normal = image::RgbaImage::new(w, h);
+    let mut hover = image::RgbaImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let border = x < 2 || y < 2 || x >= w - 2 || y >= h - 2;
+            let fill = if border { [60, 60, 60, 255] } else { [120, 120, 120, 255] };
+            let hfill = if border { [80, 80, 80, 255] } else { [150, 150, 150, 255] };
+            normal.put_pixel(x, y, image::Rgba(fill));
+            hover.put_pixel(x, y, image::Rgba(hfill));
+        }
+    }
+    widgets::register_texture("sunset:button", normal);
+    widgets::register_texture("sunset:button_hover", hover);
+
+    widgets::register_button(widgets::Button {
+        id: "sunset:fullscreen",
+        texture: "sunset:button",
+        hover_texture: Some("sunset:button_hover"),
+        x: 8.0,
+        y: 8.0,
+        width: 100.0,
+        height: 20.0,
+        label: Some("Fullscreen"),
+        on_click: |ctx| ctx.toggle_fullscreen = true,
+    });
+    widgets::register_button(widgets::Button {
+        id: "sunset:quit",
+        texture: "sunset:button",
+        hover_texture: Some("sunset:button_hover"),
+        x: 8.0,
+        y: 32.0,
+        width: 100.0,
+        height: 20.0,
+        label: Some("Quit"),
+        on_click: |ctx| ctx.quit = true,
+    });
+}
+
 fn main() {
+    setup_demo_ui();
     let event_loop = EventLoop::new().expect("could not create event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App { state: None };

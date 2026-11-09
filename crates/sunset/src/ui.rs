@@ -206,6 +206,32 @@ fn draw_number(
     }
 }
 
+/// The on-screen width (px) of `text` rendered at `scale`.
+pub fn text_width(text: &str, scale: f32) -> f32 {
+    text.chars().count() as f32 * 8.0 * scale
+}
+
+/// Draw a left-to-right string of ASCII glyphs at `(x, y)`, scaled by `scale`.
+pub fn draw_text(
+    b: &mut UiBuilder,
+    a: &UiAssets,
+    x: f32,
+    y: f32,
+    scale: f32,
+    text: &str,
+    color: u32,
+) {
+    let mut cx = x;
+    for ch in text.chars() {
+        let Some(g) = glyph_uv(a, ch as u8) else {
+            continue;
+        };
+        let w = 8.0 * scale;
+        b.quad(cx, y, w, w, g, color);
+        cx += w;
+    }
+}
+
 /// Draw an item icon at `(x, y)` with square side length `size` (screen px).
 pub fn draw_item_icon(b: &mut UiBuilder, a: &UiAssets, x: f32, y: f32, size: f32, item: Item) {
     if item == sunset_core::item::EMPTY_ITEM {

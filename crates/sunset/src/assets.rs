@@ -149,8 +149,12 @@ fn texture_entry(name: &str) -> String {
 }
 
 /// Load the supported blocks' face textures and build a texture atlas from the
-/// user's local Minecraft installation.
-pub fn load_assets(minecraft_dir: &Path) -> Result<LoadedAssets, String> {
+/// user's local Minecraft installation, plus any runtime-registered custom UI
+/// textures in `extra`.
+pub fn load_assets(
+    minecraft_dir: &Path,
+    extra: &HashMap<String, image::RgbaImage>,
+) -> Result<LoadedAssets, String> {
     let jar = find_jar(minecraft_dir).ok_or("no client jar found in versions/")?;
     let file = File::open(&jar).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
@@ -255,7 +259,7 @@ pub fn load_assets(minecraft_dir: &Path) -> Result<LoadedAssets, String> {
     }
 
     // Build the UI atlas: item icons + HUD/container sprites + font.
-    let (ui_atlas, ui_uvs, item_icons) = build_ui_atlas(&mut archive, &face_textures)?;
+    let (ui_atlas, ui_uvs, item_icons) = build_ui_atlas(&mut archive, &face_textures, extra)?;
 
     Ok(LoadedAssets {
         face_textures,
@@ -314,6 +318,7 @@ const UI_TEXTURES: &[(&str, &str)] = &[
 fn build_ui_atlas(
     archive: &mut zip::ZipArchive<File>,
     face_textures: &HashMap<BlockState, FaceTextures>,
+    extra: &HashMap<String, image::RgbaImage>,
 ) -> Result<
     (
         image::RgbaImage,
@@ -380,6 +385,11 @@ fn build_ui_atlas(
             _ => img,
         };
         entries.push((key.to_string(), img));
+    }
+
+    // Runtime-registered custom textures (mod content), merged into the atlas.
+    for (name, img) in extra {
+        entries.push((name.clone(), img.clone()));
     }
 
     // A solid 1×1 white pixel, used to tint solid-color UI elements.
@@ -462,7 +472,7 @@ mod tests {
         let Some(dir) = find_minecraft_dir() else {
             return;
         };
-        let loaded = load_assets(&dir).expect("load assets");
+        let loaded = load_assets(&dir, &HashMap::new()).expect("load assets");
         assert!(loaded.ui_uvs.contains_key("hud_hotbar"));
         assert!(loaded.ui_uvs.contains_key("hud_hotbar_selection"));
         assert!(loaded.ui_uvs.contains_key("hud_heart_full"));

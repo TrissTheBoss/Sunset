@@ -31,6 +31,12 @@ identity on disk is always the namespaced id, never the index.
 | Items | `item::register_item(ItemDef)` | `ItemDef { id, max_stack, block }` | Runtime-registered (non-block items; block items derive from blocks) |
 | Recipes | `recipe::register_recipe(Recipe)` | `Recipe { pattern, output }` | Runtime-registered |
 | Block entities (furnace/chest) | — | `world.set_block_entity(pos, BlockEntity)` | Data per-position, not a global registry |
+| UI textures | `widgets::register_texture(name, image)` | `RgbaImage` | Runtime-registered, packed into the UI atlas |
+| UI widgets (buttons) | `widgets::register_button(Button)` | `Button { id, texture, pos, size, label, on_click }` | Runtime-registered, drawn + hit-tested automatically |
+
+The UI families live in the `sunset` crate (PRD 4.1 puts "UI widgets" with the
+application, not `sunset-core`), but use the same namespaced-id + runtime-registry
+shape as the core content families.
 
 Planned (not yet implemented) families that will follow the same pattern:
 
@@ -38,6 +44,8 @@ Planned (not yet implemented) families that will follow the same pattern:
 - **Particles / effects** — a particle-type registry.
 - **Dimensions / biomes / structures** — registries of generator stages (see
   PRD 5.3 world generation).
+- **More widget kinds** (labels, panels, images) — extend the `Widget` enum
+  without changing the registry or the render loop.
 
 ## Adding content
 
@@ -47,6 +55,14 @@ Planned (not yet implemented) families that will follow the same pattern:
 - **A new item**: `item::register_item(ItemDef { id: "mymod:item",
   max_stack: 64, block: None })`.
 - **A new recipe**: `recipe::register_recipe(Recipe { pattern, output })`.
+- **A custom UI texture**: `widgets::register_texture("mymod:button", image)`,
+  then reference it by name from a widget. It is packed into the UI atlas
+  automatically.
+- **A custom button**: `widgets::register_button(Button { id: "mymod:settings",
+  texture: "mymod:button", x, y, width, height, label: Some("Settings"),
+  on_click: |ctx| ctx.open_screen = Some(Screen::Inventory) })`. It is drawn and
+  hit-tested with no other wiring; the callback receives a [`widgets::UiContext`]
+  of effects (open/close a screen, toggle fullscreen, quit) the main loop applies.
 
 ## Deferred (out of scope for now)
 
