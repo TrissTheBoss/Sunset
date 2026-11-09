@@ -99,18 +99,25 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// Everything needed to draw the world's opaque mesh.
-struct Renderer {
+/// One drawable mesh: a pipeline plus its vertex/index buffers.
+struct Drawable {
     pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
+}
+
+/// Everything needed to draw the world's opaque and transparent meshes.
+struct Renderer {
+    opaque: Drawable,
+    transparent: Drawable,
     bind_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
     depth_view: wgpu::TextureView,
 }
 
 impl Renderer {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -119,6 +126,7 @@ impl Renderer {
         format: wgpu::TextureFormat,
         atlas: &image::RgbaImage,
         opaque: &MeshData,
+        transparent: &MeshData,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shader"),
@@ -262,67 +270,32 @@ impl Renderer {
             ],
         });
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("vertex"),
-            size: (std::mem::size_of::<Vertex>() * opaque.vertices.len()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&opaque.vertices));
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("index"),
-            size: (std::mem::size_of::<u32>() * opaque.indices.len()) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&index_buffer, 0, bytemuck::cast_slice(&opaque.indices));
-
         let depth_view = create_depth_view(device, width, height);
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(VERTEX_LAYOUT)],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                // No backface culling: the merged quads use outward normals but
-                // the index winding is not consistently front-facing. Culling
-                // is a later optimization (directional face buckets, M8).
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let opaque_drawable = create_drawable(
+            device,
+            queue,
+            &shader,
+            &pipeline_layout,
+            format,
+            None,
+            true,
+            opaque,
+        );
+        let transparent_drawable = create_drawable(
+            device,
+            queue,
+            &shader,
+            &pipeline_layout,
+            format,
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+            false,
+            transparent,
+        );
 
         Self {
-            pipeline,
-            vertex_buffer,
-            index_buffer,
-            index_count: opaque.indices.len() as u32,
+            opaque: opaque_drawable,
+            transparent: transparent_drawable,
             bind_group,
             uniform_buffer,
             depth_view,
@@ -336,6 +309,8 @@ impl Renderer {
     fn render(&self, device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView) {
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+        // Opaque pass: clears color + depth and writes depth.
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("opaque"),
@@ -365,13 +340,125 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..self.index_count, 0, 0..1);
+            self.draw(&mut pass, &self.opaque);
         }
+
+        // Transparent pass: loads the opaque color/depth, alpha-blends, and
+        // tests depth without writing it (so glass is correctly occluded and
+        // occludes, but doesn't punch holes in the depth buffer).
+        if self.transparent.index_count > 0 {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("transparent"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            self.draw(&mut pass, &self.transparent);
+        }
+
         queue.submit([encoder.finish()]);
+    }
+
+    fn draw(&self, pass: &mut wgpu::RenderPass<'_>, drawable: &Drawable) {
+        pass.set_pipeline(&drawable.pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_vertex_buffer(0, drawable.vertex_buffer.slice(..));
+        pass.set_index_buffer(drawable.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..drawable.index_count, 0, 0..1);
+    }
+}
+
+/// Build a mesh's vertex/index buffers and its render pipeline.
+///
+/// `blend` selects alpha blending (transparent) vs. `None` (opaque), and
+/// `depth_write` controls whether the pass writes to the depth buffer.
+#[allow(clippy::too_many_arguments)]
+fn create_drawable(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    shader: &wgpu::ShaderModule,
+    pipeline_layout: &wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    blend: Option<wgpu::BlendState>,
+    depth_write: bool,
+    mesh: &MeshData,
+) -> Drawable {
+    let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("vertex"),
+        size: (std::mem::size_of::<Vertex>() * mesh.vertices.len()) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&mesh.vertices));
+    let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("index"),
+        size: (std::mem::size_of::<u32>() * mesh.indices.len()) as u64,
+        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&index_buffer, 0, bytemuck::cast_slice(&mesh.indices));
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("pipeline"),
+        layout: Some(pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[Some(VERTEX_LAYOUT)],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            // No backface culling: the merged quads use outward normals but
+            // the index winding is not consistently front-facing. Culling
+            // is a later optimization (directional face buckets, M8).
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: Some(depth_write),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    Drawable {
+        pipeline,
+        vertex_buffer,
+        index_buffer,
+        index_count: mesh.indices.len() as u32,
     }
 }
 
@@ -454,16 +541,25 @@ impl State {
             };
         let world = fixture::building_yard();
         let mut opaque = MeshData::new();
+        let mut transparent = MeshData::new();
         for chunk in world.chunks() {
-            let (o, _t) = mesh::build_chunk_meshes(&world, chunk, &face_textures, &uv);
-            let base = opaque.vertices.len() as u32;
+            let (o, t) = mesh::build_chunk_meshes(&world, chunk, &face_textures, &uv);
+            let obase = opaque.vertices.len() as u32;
             opaque.vertices.extend(o.vertices);
-            opaque.indices.extend(o.indices.iter().map(|i| base + i));
+            opaque.indices.extend(o.indices.iter().map(|i| obase + i));
+            let tbase = transparent.vertices.len() as u32;
+            transparent.vertices.extend(t.vertices);
+            transparent.indices.extend(t.indices.iter().map(|i| tbase + i));
         }
         println!(
             "opaque mesh: {} vertices, {} triangles",
             opaque.vertices.len(),
             opaque.indices.len() / 3
+        );
+        println!(
+            "transparent mesh: {} vertices, {} triangles",
+            transparent.vertices.len(),
+            transparent.indices.len() / 3
         );
 
         let renderer = Renderer::new(
@@ -474,6 +570,7 @@ impl State {
             config.format,
             &atlas,
             &opaque,
+            &transparent,
         );
 
         // Authoritative simulation, same spawn as the Bevy adapter.
