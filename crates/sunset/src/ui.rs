@@ -269,15 +269,17 @@ fn draw_slot_contents(
     if stack.is_empty() {
         return;
     }
-    let pad = size * 0.0625; // 1px at scale 1
+    // The slot is 18 GUI px; a 16 px icon sits in it with a 1 px border.
+    let pad = size / 18.0;
     draw_item_icon(b, a, x + pad, y + pad, size - pad * 2.0, stack.item);
     if stack.count > 1 {
         let fs = size / 18.0; // 8px glyph at 18px slot
+        let gh = 8.0 * fs; // glyph height
         draw_number(
             b,
             a,
-            x + size - pad,
-            y + size - pad,
+            x + size - pad,      // right edge, 1px inside the slot
+            y + size - pad - gh, // bottom-aligned within the slot
             fs,
             &stack.count.to_string(),
             pack_rgba(255, 255, 255, 255),
@@ -628,8 +630,11 @@ impl UiRenderer {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
+            // Linear filtering so item icons scale up smoothly instead of as
+            // hard pixel blocks. (A 1px transparent gap between atlas regions
+            // prevents cross-region bleeding.)
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
 

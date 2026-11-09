@@ -505,6 +505,9 @@ fn pack_atlas(
     entries: Vec<(String, image::RgbaImage)>,
 ) -> (image::RgbaImage, HashMap<String, [f32; 4]>) {
     const MAX_W: u32 = 1024;
+    /// 1px transparent gap between regions so linear filtering does not bleed
+    /// across region boundaries (the atlas edges are handled by ClampToEdge).
+    const PAD: u32 = 1;
 
     let mut order: Vec<usize> = (0..entries.len()).collect();
     order.sort_by_key(|&i| std::cmp::Reverse(entries[i].1.height()));
@@ -522,15 +525,15 @@ fn pack_atlas(
         if iw > MAX_W {
             continue;
         }
-        if x + iw > MAX_W {
+        if x > 0 && x + iw > MAX_W {
             x = 0;
-            y += row_h;
+            y += row_h + PAD;
             row_h = 0;
         }
         placed.push((i, x, y));
-        x += iw;
+        x += iw + PAD;
         row_h = row_h.max(ih);
-        w = w.max(x);
+        w = w.max(x.saturating_sub(PAD));
         h = h.max(y + row_h);
     }
 
