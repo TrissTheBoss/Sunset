@@ -27,8 +27,8 @@ pub use block::{
 pub use block_entity::{is_fuel, smelt_result, tick_furnace, BlockEntity, Chest, Furnace, CHEST_SIZE};
 pub use chunk::{Chunk, CHUNK_HEIGHT, CHUNK_SIZE};
 pub use item::{
-    block_drop, is_pickaxe, item_by_id, item_def, item_for_block, item_id, register_item, DropInfo,
-    Item, ItemDef, ItemStack, EMPTY_ITEM,
+    block_drop, is_pickaxe, item_by_id, item_def, item_defs, item_for_block, item_id, register_item,
+    DropInfo, Item, ItemDef, ItemStack, EMPTY_ITEM,
 };
 pub use registry::Registry;
 pub use recipe::{craft, register_recipe, Recipe};

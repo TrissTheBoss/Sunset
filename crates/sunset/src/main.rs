@@ -5,6 +5,7 @@
 
 mod assets;
 mod mesh;
+mod ui;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
@@ -14,15 +15,17 @@ use std::time::Instant;
 use glam::{Mat4, Quat, Vec2, Vec3};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
 use sunset_core::block::{block_def, occlusion_key, BlockState};
+use sunset_core::block_entity::BlockEntity;
 use sunset_core::chunk::{CHUNK_HEIGHT, CHUNK_SIZE};
 use sunset_core::fixture;
 use sunset_core::intent::{BlockAction, PlayerIntent};
+use sunset_core::item::ItemStack;
 use sunset_core::physics;
 use sunset_core::player::{Player, PLAYER_EYE_HEIGHT, PLAYER_HEIGHT};
 use sunset_core::save;
@@ -558,6 +561,7 @@ impl Renderer {
         self.depth_view = create_depth_view(device, width, height);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render(
         &mut self,
         device: &wgpu::Device,
@@ -566,6 +570,9 @@ impl Renderer {
         outline: bool,
         frustum: &Frustum,
         eye: Vec3,
+        ui_renderer: Option<&mut ui::UiRenderer>,
+        ui_builder: Option<&ui::UiBuilder>,
+        screen: (u32, u32),
     ) {
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -654,6 +661,11 @@ impl Renderer {
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
             pass.draw(0..24, 0..1);
+        }
+
+        // UI (HUD and/or the open screen) is drawn last, on top of the world.
+        if let (Some(ur), Some(ub)) = (ui_renderer, ui_builder) {
+            ur.draw(device, queue, &mut pass, screen, ub);
         }
 
         drop(pass);
@@ -1008,6 +1020,28 @@ struct State {
     bench_edit: bool,
     bench_edit_tick: u64,
     bench_edit_break: bool,
+    /// UI state: the resolved UI atlas + renderer, the open screen, and the
+    /// cursor-held stack.
+    ui_assets: Option<ui::UiAssets>,
+    ui_renderer: Option<ui::UiRenderer>,
+    screen: ui::Screen,
+    /// The block-entity position backing a furnace/chest screen.
+    screen_pos: Option<[i32; 3]>,
+    cursor: ItemStack,
+    /// Last frame's slot positions (screen px), for click hit-testing.
+    slots: Vec<(f32, f32)>,
+    /// Cursor position in physical screen pixels (for UI hit-testing).
+    mouse_pos: (f32, f32),
+}
+
+/// Where a clicked container-slot index points.
+enum SlotLoc {
+    /// A container-only slot (crafting grid, furnace, or chest) at this index.
+    Top(usize),
+    /// A player main-inventory slot (`inventory[9 + i]`).
+    Main(usize),
+    /// A hotbar slot (`inventory[i]`).
+    Hotbar(usize),
 }
 
 impl State {
@@ -1042,15 +1076,23 @@ impl State {
         };
         surface.configure(&device, &config);
 
-        // Load the world + atlas + mesh.
-        let (face_textures, uv, atlas) =
-            match assets::find_minecraft_dir().and_then(|d| assets::load_assets(&d).ok()) {
-                Some(loaded) => (loaded.face_textures, loaded.uv, loaded.atlas),
-                None => {
-                    println!("No Minecraft assets found; using flat colors");
-                    (HashMap::new(), HashMap::new(), image::RgbaImage::new(0, 0))
-                }
-            };
+        // Load the world + atlas + mesh + UI assets.
+        let loaded = assets::find_minecraft_dir().and_then(|d| assets::load_assets(&d).ok());
+        let (face_textures, uv, atlas) = match &loaded {
+            Some(l) => (l.face_textures.clone(), l.uv.clone(), l.atlas.clone()),
+            None => {
+                println!("No Minecraft assets found; using flat colors");
+                (HashMap::new(), HashMap::new(), image::RgbaImage::new(0, 0))
+            }
+        };
+        let ui_assets = loaded.as_ref().map(|l| ui::UiAssets {
+            atlas_size: l.ui_atlas.dimensions(),
+            uvs: l.ui_uvs.clone(),
+            item_icons: l.item_icons.clone(),
+        });
+        let ui_renderer = loaded
+            .as_ref()
+            .map(|l| ui::UiRenderer::new(&device, &queue, &l.ui_atlas, config.format));
         let face_table = FaceTable::build(&face_textures, &uv);
         let (world, player) = load_or_generate();
 
@@ -1120,6 +1162,13 @@ impl State {
             bench_edit,
             bench_edit_tick: 0,
             bench_edit_break: false,
+            ui_assets,
+            ui_renderer,
+            screen: ui::Screen::None,
+            screen_pos: None,
+            cursor: ItemStack::EMPTY,
+            slots: Vec::new(),
+            mouse_pos: (0.0, 0.0),
         }
     }
 
@@ -1158,6 +1207,224 @@ impl State {
         }
     }
 
+    // --- UI helpers ---
+
+    fn current_layout(&self) -> &'static ui::ContainerLayout {
+        match self.screen {
+            ui::Screen::Crafting => &ui::CRAFTING_LAYOUT,
+            ui::Screen::Furnace => &ui::FURNACE_LAYOUT,
+            ui::Screen::Chest => &ui::CHEST_LAYOUT,
+            _ => &ui::INVENTORY_LAYOUT,
+        }
+    }
+
+    /// The container-only slot stacks for the current screen.
+    fn top_stacks(&self) -> Vec<ItemStack> {
+        match self.screen {
+            ui::Screen::Crafting => {
+                let mut v: Vec<ItemStack> = self.sim.player.crafting.to_vec();
+                let result = sunset_core::craft(&self.sim.player.crafting)
+                    .map(|(item, count)| ItemStack::new(item, count))
+                    .unwrap_or(ItemStack::EMPTY);
+                v.push(result);
+                v
+            }
+            ui::Screen::Furnace => {
+                let Some(pos) = self.screen_pos else {
+                    return Vec::new();
+                };
+                match self.sim.world.get_block_entity(pos) {
+                    Some(BlockEntity::Furnace(f)) => vec![f.fuel, f.input, f.output],
+                    _ => Vec::new(),
+                }
+            }
+            ui::Screen::Chest => {
+                let Some(pos) = self.screen_pos else {
+                    return Vec::new();
+                };
+                match self.sim.world.get_block_entity(pos) {
+                    Some(BlockEntity::Chest(c)) => c.items.to_vec(),
+                    _ => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Map a flat slot index to its storage location.
+    fn slot_location(&self, top_len: usize, flat: usize) -> Option<SlotLoc> {
+        if flat < top_len {
+            return Some(SlotLoc::Top(flat));
+        }
+        let i = flat - top_len;
+        if i < 18 {
+            return Some(SlotLoc::Main(i));
+        }
+        let i = i - 18;
+        if i < 9 {
+            return Some(SlotLoc::Hotbar(i));
+        }
+        None
+    }
+
+    fn handle_slot_click(&mut self, top_len: usize, flat: usize, click: ui::Click) {
+        let Some(loc) = self.slot_location(top_len, flat) else {
+            return;
+        };
+        match loc {
+            SlotLoc::Top(i) => match self.screen {
+                ui::Screen::Crafting => {
+                    if i == 9 {
+                        self.take_craft_result();
+                    } else if i < 9 {
+                        ui::click_slot(&mut self.cursor, &mut self.sim.player.crafting[i], click);
+                    }
+                }
+                ui::Screen::Furnace => {
+                    let Some(pos) = self.screen_pos else {
+                        return;
+                    };
+                    if let Some(BlockEntity::Furnace(f)) = self.sim.world.get_block_entity_mut(pos)
+                    {
+                        let slot = match i {
+                            0 => &mut f.fuel,
+                            1 => &mut f.input,
+                            _ => &mut f.output,
+                        };
+                        ui::click_slot(&mut self.cursor, slot, click);
+                    }
+                }
+                ui::Screen::Chest => {
+                    let Some(pos) = self.screen_pos else {
+                        return;
+                    };
+                    if let Some(BlockEntity::Chest(c)) = self.sim.world.get_block_entity_mut(pos)
+                    {
+                        if i < 27 {
+                            ui::click_slot(&mut self.cursor, &mut c.items[i], click);
+                        }
+                    }
+                }
+                _ => {}
+            },
+            SlotLoc::Main(i) => {
+                ui::click_slot(&mut self.cursor, &mut self.sim.player.inventory[9 + i], click);
+            }
+            SlotLoc::Hotbar(i) => {
+                ui::click_slot(&mut self.cursor, &mut self.sim.player.inventory[i], click);
+            }
+        }
+    }
+
+    fn take_craft_result(&mut self) {
+        let Some((item, count)) = sunset_core::craft(&self.sim.player.crafting) else {
+            return;
+        };
+        for slot in &mut self.sim.player.crafting {
+            if !slot.is_empty() {
+                slot.count -= 1;
+                if slot.count == 0 {
+                    *slot = ItemStack::EMPTY;
+                }
+            }
+        }
+        if self.cursor.is_empty() {
+            self.cursor = ItemStack::new(item, count);
+        } else if self.cursor.item == item {
+            let max = self.cursor.max_stack();
+            self.cursor.count = (self.cursor.count + count).min(max);
+        }
+    }
+
+    fn open_screen(&mut self, screen: ui::Screen, pos: Option<[i32; 3]>) {
+        self.screen = screen;
+        self.screen_pos = pos;
+        let _ = self.window.set_cursor_grab(CursorGrabMode::None);
+        self.window.set_cursor_visible(true);
+        self.cursor_captured = false;
+        self.mouse_buttons.clear();
+    }
+
+    fn close_screen(&mut self) {
+        if !self.cursor.is_empty() {
+            self.sim.player.add_item(self.cursor.item, self.cursor.count);
+            self.cursor = ItemStack::EMPTY;
+        }
+        self.screen = ui::Screen::None;
+        self.screen_pos = None;
+        let _ = self.window.set_cursor_grab(CursorGrabMode::Locked);
+        self.window.set_cursor_visible(false);
+        self.cursor_captured = true;
+    }
+
+    fn build_ui(&mut self) -> Option<ui::UiBuilder> {
+        let assets = self.ui_assets.as_ref()?;
+        let screen = (self.config.width, self.config.height);
+        let mut b = ui::UiBuilder::new();
+        if self.screen == ui::Screen::None {
+            ui::draw_hud(
+                &mut b,
+                assets,
+                &self.sim.player.inventory,
+                self.sim.player.selected_slot,
+                self.sim.player.health,
+                screen,
+            );
+        } else {
+            b.solid(
+                assets,
+                0.0,
+                0.0,
+                screen.0 as f32,
+                screen.1 as f32,
+                ui::pack_rgba(0, 0, 0, 120),
+            );
+            let layout = self.current_layout();
+            let top = self.top_stacks();
+            self.slots =
+                ui::draw_container_screen(&mut b, assets, layout, &top, &self.sim.player, screen);
+            if !self.cursor.is_empty() {
+                let s = ui::gui_scale(screen.0, screen.1) as f32;
+                let size = 16.0 * s;
+                ui::draw_item_icon(
+                    &mut b,
+                    assets,
+                    self.mouse_pos.0 - size / 2.0,
+                    self.mouse_pos.1 - size / 2.0,
+                    size,
+                    self.cursor.item,
+                );
+            }
+        }
+        Some(b)
+    }
+
+    fn click_slot_at(&mut self, click: ui::Click) {
+        let (mx, my) = self.mouse_pos;
+        let s = ui::gui_scale(self.config.width, self.config.height) as f32;
+        let size = 18.0 * s;
+        let top_len = self.current_layout().top_slots.len();
+        for (i, &(sx, sy)) in self.slots.iter().enumerate() {
+            if mx >= sx && mx < sx + size && my >= sy && my < sy + size {
+                self.handle_slot_click(top_len, i, click);
+                return;
+            }
+        }
+    }
+
+    fn try_open_container(&mut self) {
+        let Some((pos, _face)) = self.target else {
+            return;
+        };
+        let b = self.sim.world.get_block(pos[0], pos[1], pos[2]);
+        match block_def(b).id {
+            "minecraft:crafting_table" => self.open_screen(ui::Screen::Crafting, None),
+            "minecraft:furnace" => self.open_screen(ui::Screen::Furnace, Some(pos)),
+            "minecraft:chest" => self.open_screen(ui::Screen::Chest, Some(pos)),
+            _ => {}
+        }
+    }
+
     fn render(&mut self) -> bool {
         // Step the authoritative simulation at a fixed 20 Hz.
         let now = Instant::now();
@@ -1188,8 +1455,12 @@ impl State {
         if self.keys.contains(&KeyCode::KeyA) {
             move_axis.x -= 1.0;
         }
-        self.intent.move_axis = move_axis.normalize_or_zero();
-        self.intent.jump = self.keys.contains(&KeyCode::Space);
+        self.intent.move_axis = if self.screen == ui::Screen::None {
+            move_axis.normalize_or_zero()
+        } else {
+            Vec2::ZERO
+        };
+        self.intent.jump = self.screen == ui::Screen::None && self.keys.contains(&KeyCode::Space);
 
         // Look direction (rotation is authoritative, not interpolated).
         let rot = Quat::from_euler(
@@ -1295,6 +1566,7 @@ impl State {
         let view_tex = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        let ui_builder = self.build_ui();
         if let Some(r) = &mut self.renderer {
             // Skip the upload when the uniform is unchanged and the destination
             // buffer already holds valid data (M13).
@@ -1306,6 +1578,7 @@ impl State {
                 );
                 self.last_uniform = Some(uniform);
             }
+            let screen = (self.config.width, self.config.height);
             r.render(
                 &self.device,
                 &self.queue,
@@ -1313,6 +1586,9 @@ impl State {
                 self.target.is_some(),
                 &frustum,
                 eye,
+                self.ui_renderer.as_mut(),
+                ui_builder.as_ref(),
+                screen,
             );
         }
         self.queue.present(surface_texture);
@@ -1385,10 +1661,21 @@ impl ApplicationHandler for App {
                     if let PhysicalKey::Code(code) = event.physical_key {
                         if event.state == ElementState::Pressed {
                             state.keys.insert(code);
-                            if code == KeyCode::Escape && state.cursor_captured {
-                                state.cursor_captured = false;
-                                let _ = state.window.set_cursor_grab(CursorGrabMode::None);
-                                state.window.set_cursor_visible(true);
+                            if code == KeyCode::Escape {
+                                if state.screen != ui::Screen::None {
+                                    state.close_screen();
+                                } else if state.cursor_captured {
+                                    state.cursor_captured = false;
+                                    let _ = state.window.set_cursor_grab(CursorGrabMode::None);
+                                    state.window.set_cursor_visible(true);
+                                }
+                            }
+                            if code == KeyCode::KeyE {
+                                if state.screen == ui::Screen::None {
+                                    state.open_screen(ui::Screen::Inventory, None);
+                                } else {
+                                    state.close_screen();
+                                }
                             }
                             if let Some(slot) = digit_slot(code) {
                                 state.intent.select_slot = Some(slot);
@@ -1422,16 +1709,42 @@ impl ApplicationHandler for App {
                 if let Some(state) = &mut self.state {
                     match button_state {
                         ElementState::Pressed => {
-                            state.mouse_buttons.insert(button);
-                            // Left-click re-captures the cursor when free.
-                            if button == MouseButton::Left && !state.cursor_captured {
-                                let _ = state.window.set_cursor_grab(CursorGrabMode::Locked);
-                                state.window.set_cursor_visible(false);
-                                state.cursor_captured = true;
+                            if state.screen != ui::Screen::None {
+                                let click = match button {
+                                    MouseButton::Left => Some(ui::Click::Left),
+                                    MouseButton::Right => Some(ui::Click::Right),
+                                    _ => None,
+                                };
+                                if let Some(click) = click {
+                                    state.click_slot_at(click);
+                                }
+                            } else {
+                                state.mouse_buttons.insert(button);
+                                if button == MouseButton::Right {
+                                    state.try_open_container();
+                                }
                             }
                         }
                         ElementState::Released => {
                             state.mouse_buttons.remove(&button);
+                        }
+                    }
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                if let Some(state) = &mut self.state {
+                    state.mouse_pos = (position.x as f32, position.y as f32);
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                if let Some(state) = &mut self.state {
+                    if let MouseScrollDelta::LineDelta(_, y) = delta {
+                        let step = if y > 0.0 { -1 } else if y < 0.0 { 1 } else { 0 };
+                        if step != 0 {
+                            let n = sunset_core::player::HOTBAR_SIZE as i32;
+                            let cur = state.sim.player.selected_slot as i32;
+                            let next = (cur + step).rem_euclid(n);
+                            state.intent.select_slot = Some(next as usize);
                         }
                     }
                 }

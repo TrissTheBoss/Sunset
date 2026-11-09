@@ -84,6 +84,28 @@ pub fn item_def(item: Item) -> Option<ItemDef> {
     }
 }
 
+/// Snapshot every registered item as `(item, definition)`: block items first,
+/// then non-block items. Used by the renderer to map item icons.
+pub fn item_defs() -> Vec<(Item, ItemDef)> {
+    let n = block_item_count();
+    let mut v = Vec::with_capacity(n as usize + 4);
+    for state in 0..n {
+        v.push((
+            state,
+            ItemDef {
+                id: block_def(state).id,
+                max_stack: 64,
+                block: Some(state),
+            },
+        ));
+    }
+    let reg = NON_BLOCK_ITEMS.read().expect("item registry");
+    for (i, def) in reg.iter() {
+        v.push((n + i, *def));
+    }
+    v
+}
+
 /// The item corresponding to a block state (its "item form").
 pub fn item_for_block(state: BlockState) -> Item {
     state
