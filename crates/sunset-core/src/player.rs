@@ -1,12 +1,12 @@
-//! Authoritative player state: position, velocity, rotation, and hotbar.
+//! Authoritative player state: position, velocity, rotation, and inventory.
 //!
-//! Position is the player's feet (bottom-center of the collision box). Rotation
-//! is stored here so it persists in saves; look input mutates it directly at
-//! render rate while movement goes through the fixed-tick simulation.
+//! Position is the feet (bottom-center of the collision box). Rotation is stored
+//! here so it persists in saves; look input mutates it directly at render rate
+//! while movement goes through the fixed-tick simulation.
 
 use glam::Vec3;
 
-use crate::block::{state_by_id, BlockState, AIR};
+use crate::item::{item_by_id, item_def, Item, ItemStack};
 
 /// Player half-width (X/Z extent).
 pub const PLAYER_HALF_WIDTH: f32 = 0.3;
@@ -14,6 +14,12 @@ pub const PLAYER_HALF_WIDTH: f32 = 0.3;
 pub const PLAYER_HEIGHT: f32 = 1.8;
 /// Eye height above the feet.
 pub const PLAYER_EYE_HEIGHT: f32 = 1.62;
+/// Hotbar slots (the first slots of the inventory).
+pub const HOTBAR_SIZE: usize = 9;
+/// Main-inventory slots (after the hotbar).
+pub const MAIN_SIZE: usize = 18;
+/// Total inventory slots.
+pub const INVENTORY_SIZE: usize = HOTBAR_SIZE + MAIN_SIZE;
 
 /// Authoritative player state.
 #[derive(Debug, Clone)]
@@ -23,8 +29,8 @@ pub struct Player {
     pub yaw: f32,
     pub pitch: f32,
     pub on_ground: bool,
-    /// Nine-slot hotbar; empty slots are [`AIR`].
-    pub hotbar: [BlockState; 9],
+    /// The inventory; the first [`HOTBAR_SIZE`] slots are the hotbar.
+    pub inventory: [ItemStack; INVENTORY_SIZE],
     pub selected_slot: usize,
 }
 
@@ -36,7 +42,7 @@ impl Player {
             yaw,
             pitch,
             on_ground: false,
-            hotbar: default_hotbar(),
+            inventory: default_inventory(),
             selected_slot: 0,
         }
     }
@@ -46,20 +52,55 @@ impl Player {
     pub fn eye_pos(&self) -> Vec3 {
         self.pos + Vec3::new(0.0, PLAYER_EYE_HEIGHT - PLAYER_HEIGHT * 0.5, 0.0)
     }
+
+    /// Add `count` of `item` to the inventory, stacking onto existing stacks
+    /// (hotbar first) then filling empty slots. Returns the count that did not
+    /// fit (0 when everything was added).
+    pub fn add_item(&mut self, item: Item, count: u32) -> u32 {
+        let max = item_def(item).map(|d| d.max_stack).unwrap_or(0);
+        let mut remaining = count;
+        for slot in &mut self.inventory {
+            if remaining == 0 {
+                break;
+            }
+            if slot.item == item && slot.count < max {
+                let add = (max - slot.count).min(remaining);
+                slot.count += add;
+                remaining -= add;
+            }
+        }
+        for slot in &mut self.inventory {
+            if remaining == 0 {
+                break;
+            }
+            if slot.is_empty() {
+                let add = max.min(remaining);
+                *slot = ItemStack::new(item, add);
+                remaining -= add;
+            }
+        }
+        remaining
+    }
 }
 
-/// The hotbar: the five supported target blocks plus the M2 slab and glass,
-/// then empty slots.
-pub fn default_hotbar() -> [BlockState; 9] {
-    [
-        state_by_id("minecraft:stone").unwrap(),
-        state_by_id("minecraft:dirt").unwrap(),
-        state_by_id("minecraft:grass_block").unwrap(),
-        state_by_id("minecraft:cobblestone").unwrap(),
-        state_by_id("minecraft:oak_planks").unwrap(),
-        state_by_id("minecraft:smooth_stone_slab[type=bottom]").unwrap(),
-        state_by_id("minecraft:glass").unwrap(),
-        AIR,
-        AIR,
+/// The starting inventory: the target blocks in the hotbar (count 1 each) and an
+/// empty main inventory. The player obtains more materials by breaking blocks.
+pub fn default_inventory() -> [ItemStack; INVENTORY_SIZE] {
+    let mut inv = [ItemStack::EMPTY; INVENTORY_SIZE];
+    for (i, id) in [
+        "minecraft:stone",
+        "minecraft:dirt",
+        "minecraft:grass_block",
+        "minecraft:cobblestone",
+        "minecraft:oak_planks",
+        "minecraft:smooth_stone_slab[type=bottom]",
+        "minecraft:glass",
     ]
+    .iter()
+    .enumerate()
+    {
+        inv[i] = ItemStack::new(item_by_id(id).expect("registered item"), 1);
+    }
+    inv
 }
+

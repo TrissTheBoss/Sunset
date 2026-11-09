@@ -7,11 +7,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::block::{block_def, state_by_id, AIR};
 use crate::chunk::{CHUNK_HEIGHT, CHUNK_SIZE};
+use crate::item::{item_by_id, item_id, ItemStack, EMPTY_ITEM};
 use crate::player::Player;
 use crate::world::World;
 
 /// Current save schema version.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Serialize, Deserialize)]
 pub struct SaveData {
@@ -26,8 +27,15 @@ pub struct PlayerSave {
     pub yaw: f32,
     pub pitch: f32,
     pub selected_slot: usize,
-    /// Hotbar slots as namespaced block ids (durable, not array indices).
-    pub hotbar: Vec<String>,
+    /// Inventory slots as (namespaced item id, count); empty slots are
+    /// `minecraft:air` with count 0.
+    pub inventory: Vec<ItemSave>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ItemSave {
+    pub id: String,
+    pub count: u32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -71,10 +79,13 @@ pub fn to_json(world: &World, player: &Player) -> String {
             yaw: player.yaw,
             pitch: player.pitch,
             selected_slot: player.selected_slot,
-            hotbar: player
-                .hotbar
+            inventory: player
+                .inventory
                 .iter()
-                .map(|&s| block_def(s).id.to_string())
+                .map(|s| ItemSave {
+                    id: item_id(s.item).unwrap_or("minecraft:air").to_string(),
+                    count: s.count,
+                })
                 .collect(),
         },
         chunks,
@@ -123,12 +134,13 @@ pub fn from_json(json: &str) -> Result<(World, Player), String> {
         p.yaw,
         p.pitch,
     );
-    if p.selected_slot < player.hotbar.len() {
+    if p.selected_slot < player.inventory.len() {
         player.selected_slot = p.selected_slot;
     }
-    for (i, id) in p.hotbar.iter().enumerate() {
-        if i < player.hotbar.len() {
-            player.hotbar[i] = state_by_id(id).unwrap_or(AIR);
+    for (i, is) in p.inventory.iter().enumerate() {
+        if i < player.inventory.len() {
+            player.inventory[i] =
+                ItemStack::new(item_by_id(&is.id).unwrap_or(EMPTY_ITEM), is.count);
         }
     }
 

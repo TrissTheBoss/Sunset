@@ -3,8 +3,9 @@
 
 use crate::block::AIR;
 use crate::intent::{BlockAction, PlayerIntent};
+use crate::item::{item_def, item_for_block, ItemStack};
 use crate::physics::{self, Aabb};
-use crate::player::{Player, PLAYER_HALF_WIDTH, PLAYER_HEIGHT};
+use crate::player::{Player, HOTBAR_SIZE, PLAYER_HALF_WIDTH, PLAYER_HEIGHT};
 use crate::world::World;
 
 /// Downward acceleration (blocks/s^2).
@@ -70,7 +71,7 @@ impl Simulation {
 
         // Hotbar selection.
         if let Some(slot) = intent.select_slot {
-            if slot < self.player.hotbar.len() {
+            if slot < HOTBAR_SIZE {
                 self.player.selected_slot = slot;
             }
         }
@@ -79,10 +80,21 @@ impl Simulation {
         if let Some(action) = intent.block_action {
             match action {
                 BlockAction::Break(pos) => {
+                    let old = self.world.get_block(pos[0], pos[1], pos[2]);
+                    if old == AIR {
+                        return;
+                    }
                     self.world.set_block(pos[0], pos[1], pos[2], AIR);
+                    // Drop the block's item into the inventory (M3 increment 1:
+                    // every block drops its own item form).
+                    let drop = item_for_block(old);
+                    self.player.add_item(drop, 1);
                 }
                 BlockAction::Place(pos) => {
-                    let block = self.player.hotbar[self.player.selected_slot];
+                    let slot = self.player.inventory[self.player.selected_slot];
+                    let Some(block) = item_def(slot.item).and_then(|d| d.block) else {
+                        return;
+                    };
                     if block == AIR {
                         return;
                     }
@@ -90,6 +102,12 @@ impl Simulation {
                         return;
                     }
                     self.world.set_block(pos[0], pos[1], pos[2], block);
+                    // Consume one item from the selected slot.
+                    let slot = &mut self.player.inventory[self.player.selected_slot];
+                    slot.count -= 1;
+                    if slot.count == 0 {
+                        *slot = ItemStack::EMPTY;
+                    }
                 }
             }
         }
@@ -99,8 +117,10 @@ impl Simulation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block::state_by_id;
     use crate::fixture;
     use crate::intent::{BlockAction, PlayerIntent};
+    use crate::item::item_by_id;
     use crate::save;
 
     const DT: f32 = 1.0 / 20.0;
@@ -199,5 +219,69 @@ mod tests {
         // Feet must rise more than one block above the ground.
         let feet_rise = peak - ground_center;
         assert!(feet_rise > 1.0, "jump too short: {feet_rise}");
+    }
+
+    #[test]
+    fn breaking_a_block_drops_its_item() {
+        let mut world = World::new();
+        let stone = state_by_id("minecraft:stone").unwrap();
+        world.set_block(0, 0, 0, stone);
+        let mut sim = Simulation::new(
+            world,
+            Player::new(glam::Vec3::new(5.0, 5.0, 5.0), 0.0, 0.0),
+        );
+        let stone_item = item_by_id("minecraft:stone").unwrap();
+        let before: u32 = sim
+            .player
+            .inventory
+            .iter()
+            .filter(|s| s.item == stone_item)
+            .map(|s| s.count)
+            .sum();
+        sim.step(
+            &PlayerIntent {
+                block_action: Some(BlockAction::Break([0, 0, 0])),
+                ..Default::default()
+            },
+            DT,
+        );
+        let after: u32 = sim
+            .player
+            .inventory
+            .iter()
+            .filter(|s| s.item == stone_item)
+            .map(|s| s.count)
+            .sum();
+        assert_eq!(after, before + 1, "breaking stone should add one stone item");
+        assert_eq!(sim.world.get_block(0, 0, 0), AIR);
+    }
+
+    #[test]
+    fn placing_a_block_consumes_an_item() {
+        let world = fixture::building_yard();
+        let mut sim = Simulation::new(
+            world,
+            Player::new(glam::Vec3::new(8.0, 5.5, 16.0), 0.5, -0.25),
+        );
+        // Slot 0 is stone (from the default inventory).
+        sim.player.selected_slot = 0;
+        let before = sim.player.inventory[0].count;
+        assert!(before > 0, "slot 0 should start non-empty");
+        sim.step(
+            &PlayerIntent {
+                block_action: Some(BlockAction::Place([8, 20, 16])),
+                ..Default::default()
+            },
+            DT,
+        );
+        assert_eq!(
+            sim.player.inventory[0].count,
+            before - 1,
+            "placing should consume one item"
+        );
+        assert_eq!(
+            sim.world.get_block(8, 20, 16),
+            state_by_id("minecraft:stone").unwrap()
+        );
     }
 }

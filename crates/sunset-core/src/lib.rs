@@ -10,6 +10,7 @@ pub mod block;
 pub mod chunk;
 pub mod fixture;
 pub mod intent;
+pub mod item;
 pub mod physics;
 pub mod player;
 pub mod save;
@@ -21,4 +22,5 @@ pub use block::{
     BlockDef, BlockState, Opacity, Shape, AIR, BLOCKS,
 };
 pub use chunk::{Chunk, CHUNK_HEIGHT, CHUNK_SIZE};
+pub use item::{item_by_id, item_def, item_for_block, item_id, Item, ItemDef, ItemStack, EMPTY_ITEM};
 pub use world::World;

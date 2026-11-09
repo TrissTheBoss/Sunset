@@ -49,9 +49,33 @@
 
 ## Next playable increment
 
-- **M3 — First Survival progression** (PRD 5.2): verified recipes, tools,
-  inventory, furnace processing, and health/damage/drops in a controlled
-  fixture world.
+- **M3 — First Survival progression** (PRD 5.2). First slice landed (items,
+  drops, inventory); remaining slices below.
+
+### M3 progress (items, drops, inventory — first slice)
+
+- Introduced a durable item model (`sunset-core::item`): block items (one per
+  block state, placing that block) plus a `minecraft:stick` non-block item.
+- Added `ItemStack` (item + count, 64-stack limit) and a 27-slot inventory
+  (9 hotbar + 18 main) on the player, replacing the block-only hotbar.
+- Breaking a block now drops its item into the inventory (stacking onto existing
+  stacks, then empty slots); placing a block consumes one item from the selected
+  hotbar slot.
+- Save schema bumped to v3: the inventory round-trips through `saves/*.sunset`
+  (namespaced item id + count per slot).
+- Headless tests cover block→item drops, place-consumes, item lookup, and save
+  round-trip.
+
+### Remaining M3 slices (not yet implemented)
+
+1. Crafting (planks, crafting table, wooden pickaxe) with verified recipes.
+2. Tool rules and mining (correct tool speed, stone tool).
+3. Furnace recipe/fuel/output transaction (with save/reopen).
+4. Chest storage (container, recover after reopen).
+5. Health, damage, death/respawn and drops loop.
+
+Inventory *manipulation* (moving items between slots) still needs a UI; selecting
+a hotbar slot and placing is the only interaction so far.
 
 ## Blockers
 
