@@ -105,7 +105,7 @@ const FACE_SHADE: [f32; 6] = [1.0, 0.5, 0.6, 0.6, 0.8, 0.8];
 /// Texture-space UVs per face corner (0..1), indexed like `face_corners`.
 const FACE_UVS: [[[f32; 2]; 4]; 6] = [
     // +Y (top)
-    [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+    [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
     // -Y (bottom)
     [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
     // +X (east)
@@ -133,10 +133,10 @@ const FACE_AXES: [(usize, usize, usize); 6] = [
 fn face_corners(min: Vec3, max: Vec3, face: usize) -> [[f32; 3]; 4] {
     match face {
         0 => [
-            [min.x, max.y, min.z],
-            [max.x, max.y, min.z],
-            [max.x, max.y, max.z],
             [min.x, max.y, max.z],
+            [max.x, max.y, max.z],
+            [max.x, max.y, min.z],
+            [min.x, max.y, min.z],
         ],
         1 => [
             [min.x, min.y, min.z],
@@ -172,10 +172,47 @@ fn face_corners(min: Vec3, max: Vec3, face: usize) -> [[f32; 3]; 4] {
     }
 }
 
-/// Whether a face of `state` (bordered by `neighbor`) should be drawn.
-fn face_visible(state: BlockState, neighbor: BlockState) -> bool {
+/// Whether a face of `state` (a box `self_min..self_max` facing `normal`,
+/// bordered by `neighbor`) should be drawn. A neighbour suppresses the face only
+/// when its own geometry actually reaches the face's surface (relevant for
+/// slabs, whose faces sit inside the cell) and only per the transparency rule.
+fn face_visible(
+    state: BlockState,
+    neighbor: BlockState,
+    normal: [i32; 3],
+    self_min: Vec3,
+    self_max: Vec3,
+) -> bool {
     if neighbor == AIR {
         return true;
+    }
+    // The face's surface plane along the normal axis (block-local).
+    let axis = if normal[0] != 0 {
+        0
+    } else if normal[1] != 0 {
+        1
+    } else {
+        2
+    };
+    let surface = if normal[axis] > 0 {
+        self_max[axis]
+    } else {
+        self_min[axis]
+    };
+    // The neighbour covers this face only if its geometry actually reaches that
+    // plane. Collision boxes use exact halves (0.0 / 0.5 / 1.0), so equality is
+    // exact, not approximate.
+    if let Some((nbmin, nbmax)) = block_def(neighbor).collision_box() {
+        let neighbor_edge = if normal[axis] > 0 {
+            1.0 + nbmin[axis]
+        } else {
+            -1.0 + nbmax[axis]
+        };
+        if neighbor_edge != surface {
+            return true; // gap: the neighbour's geometry doesn't touch this face
+        }
+    } else {
+        return true; // neighbour has no geometry
     }
     if is_transparent(state) {
         !is_transparent(neighbor)
@@ -227,7 +264,7 @@ fn greedy_face(
                     y as i32 + ny,
                     base_z + z as i32 + nz,
                 );
-                if !face_visible(state, neighbor) {
+                if !face_visible(state, neighbor, [nx, ny, nz], Vec3::ZERO, Vec3::ONE) {
                     continue;
                 }
                 let rect = face_textures
@@ -380,7 +417,7 @@ pub fn build_chunk_meshes(
                 for face in 0..6 {
                     let [nx, ny, nz] = FACE_NORMALS[face];
                     let neighbor = world.get_block(wx + nx, wy + ny, wz + nz);
-                    if !face_visible(state, neighbor) {
+                    if !face_visible(state, neighbor, [nx, ny, nz], bmin, bmax) {
                         continue;
                     }
                     let shade = FACE_SHADE[face];
@@ -443,6 +480,7 @@ pub fn build_chunk_meshes(
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use sunset_core::block::state_by_id;
     use sunset_core::fixture;
 
     /// The packed vertex is 28 bytes: 12 (position) + 4 (uv) + 4 (color) + 8
@@ -514,6 +552,158 @@ mod tests {
             assert_eq!(io, o, "opaque mesh mismatch for chunk {key:?}");
             assert_eq!(it, t, "transparent mesh mismatch for chunk {key:?}");
         }
+    }
+
+    /// (centroid, unit outward normal) per triangle.
+    fn triangle_centroids(mesh: &MeshData) -> Vec<([f32; 3], [f32; 3])> {
+        mesh.indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|tri| {
+                let a = mesh.vertices[tri[0] as usize].position;
+                let b = mesh.vertices[tri[1] as usize].position;
+                let c = mesh.vertices[tri[2] as usize].position;
+                let centroid = [
+                    (a[0] + b[0] + c[0]) / 3.0,
+                    (a[1] + b[1] + c[1]) / 3.0,
+                    (a[2] + b[2] + c[2]) / 3.0,
+                ];
+                let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+                let n = [
+                    e1[1] * e2[2] - e1[2] * e2[1],
+                    e1[2] * e2[0] - e1[0] * e2[2],
+                    e1[0] * e2[1] - e1[1] * e2[0],
+                ];
+                let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+                (centroid, [n[0] / len, n[1] / len, n[2] / len])
+            })
+            .collect()
+    }
+
+    /// Snap a unit normal to its axis direction (`[±1, 0, 0]`, …).
+    fn axis_of(n: [f32; 3]) -> Option<[i32; 3]> {
+        for a in 0..3 {
+            if n[a].abs() > 0.9 {
+                let mut v = [0i32; 3];
+                v[a] = if n[a] > 0.0 { 1 } else { -1 };
+                return Some(v);
+            }
+        }
+        None
+    }
+
+    /// Mesh one chunk of a small authored world (no textures/atlas).
+    fn mesh_world(world: &World, cx: i32, cz: i32) -> (MeshData, MeshData) {
+        let face_textures: HashMap<BlockState, FaceTextures> = HashMap::new();
+        let uv: HashMap<String, [f32; 4]> = HashMap::new();
+        let chunk = world.get_chunk(cx, cz).expect("chunk exists");
+        build_chunk_meshes(world, chunk, &face_textures, &uv)
+    }
+
+    #[test]
+    fn cube_winds_outward() {
+        let stone = state_by_id("minecraft:stone").expect("registered");
+        let mut world = World::new();
+        world.set_block(0, 0, 0, stone);
+        let (opaque, _) = mesh_world(&world, 0, 0);
+
+        assert_eq!(opaque.indices.len() / 3, 12, "single cube = 6 faces = 12 tris");
+
+        let mut counts: HashMap<[i32; 3], usize> = HashMap::new();
+        for &(_, n) in &triangle_centroids(&opaque) {
+            *counts.entry(axis_of(n).expect("axis-aligned")).or_default() += 1;
+        }
+        for dir in [[0, 1, 0], [0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]] {
+            assert_eq!(counts.get(&dir), Some(&2), "face {dir:?} must wind outward");
+        }
+    }
+
+    #[test]
+    fn bottom_slab_top_face_not_culled_by_cube_above() {
+        let slab = state_by_id("minecraft:smooth_stone_slab[type=bottom]").expect("registered");
+        let stone = state_by_id("minecraft:stone").expect("registered");
+        let mut world = World::new();
+        world.set_block(0, 0, 0, slab);
+        world.set_block(0, 1, 0, stone);
+        let (opaque, _) = mesh_world(&world, 0, 0);
+
+        let has_slab_top = triangle_centroids(&opaque)
+            .iter()
+            .any(|&(c, n)| axis_of(n) == Some([0, 1, 0]) && (c[1] - 0.5).abs() < 0.01);
+        assert!(
+            has_slab_top,
+            "bottom slab top face (y=0.5) must not be culled by the cube above"
+        );
+    }
+
+    #[test]
+    fn top_slab_bottom_face_not_culled_by_cube_below() {
+        let slab = state_by_id("minecraft:smooth_stone_slab[type=top]").expect("registered");
+        let stone = state_by_id("minecraft:stone").expect("registered");
+        let mut world = World::new();
+        world.set_block(0, 0, 0, stone);
+        world.set_block(0, 1, 0, slab);
+        let (opaque, _) = mesh_world(&world, 0, 0);
+
+        let has_slab_bottom = triangle_centroids(&opaque)
+            .iter()
+            .any(|&(c, n)| axis_of(n) == Some([0, -1, 0]) && (c[1] - 1.5).abs() < 0.01);
+        assert!(
+            has_slab_bottom,
+            "top slab bottom face (y=1.5) must not be culled by the cube below"
+        );
+    }
+
+    #[test]
+    fn stacked_cubes_cull_interface_face() {
+        let stone = state_by_id("minecraft:stone").expect("registered");
+        let mut world = World::new();
+        world.set_block(0, 0, 0, stone);
+        world.set_block(0, 1, 0, stone);
+        let (opaque, _) = mesh_world(&world, 0, 0);
+
+        // Greedy meshing merges the coplanar side faces of the two cubes, so:
+        // 1 top (+Y) + 1 bottom (-Y) + 4 merged side faces = 6 faces = 12 tris.
+        assert_eq!(opaque.indices.len() / 3, 12, "two stacked cubes expose 6 faces");
+
+        // The interface at y=1 (bottom cube's top / top cube's bottom) is culled:
+        // no +Y or -Y face sits at y=1.
+        let interface = triangle_centroids(&opaque).iter().any(|&(c, n)| {
+            (c[1] - 1.0).abs() < 0.01
+                && (axis_of(n) == Some([0, 1, 0]) || axis_of(n) == Some([0, -1, 0]))
+        });
+        assert!(!interface, "interface face between stacked cubes must be culled");
+    }
+
+    #[test]
+    fn glass_renders_all_six_faces_transparent() {
+        let glass = state_by_id("minecraft:glass").expect("registered");
+        let mut world = World::new();
+        world.set_block(0, 0, 0, glass);
+        let (opaque, transparent) = mesh_world(&world, 0, 0);
+
+        assert!(opaque.indices.is_empty(), "glass is not opaque");
+        assert_eq!(transparent.indices.len() / 3, 12, "glass exposes all 6 faces");
+    }
+
+    #[test]
+    fn merged_rectangle_top_face() {
+        let stone = state_by_id("minecraft:stone").expect("registered");
+        let mut world = World::new();
+        for wx in 0..2 {
+            for wz in 0..2 {
+                world.set_block(wx, 0, wz, stone);
+            }
+        }
+        let (opaque, _) = mesh_world(&world, 0, 0);
+
+        let top = triangle_centroids(&opaque)
+            .iter()
+            .filter(|&&(_, n)| axis_of(n) == Some([0, 1, 0]))
+            .count();
+        assert_eq!(top, 2, "2x2 top surface must merge into a single rectangle");
     }
 }
 
