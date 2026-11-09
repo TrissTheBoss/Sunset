@@ -66,3 +66,78 @@ avg=442.9, 403.8, 365.6, 322.2, 322.4, 334.7, 349.0, 395.0   (0.1%-low ≈ 9 eac
   exits.
 - **Bevy:** `hud::log_frame_stats` logs `FPS_STATS avg=… 0.1%low=…` once per
   second (a 1000-frame rolling window), captured from stderr.
+
+## 6. Dense-world scalability (post-M10)
+
+**Date:** 2026-11-09 · **Build:** `--release` (full `opt-level = 3`).
+
+### 6.1 Purpose
+
+M8 (frustum culling) and M9 (transparent sorting) landed against the tiny
+`building-yard` fixture (25 chunks), where the deferred sub-work in the plan
+(face buckets, batching/indirect, depth occlusion) is explicitly scoped to a
+dense world. This section exercises the renderer across a scaling range to see
+where FPS degrades and whether that deferred work becomes necessary.
+
+A new `SUNSET_WORLD_RADIUS=N` environment variable (which overrides any save on
+disk) generates a deterministic rolling-hill world spanning `(2N+1)` chunks on
+each side (`sunset_core::fixture::hilly_world`). The smooth height variation
+prevents greedy meshing from collapsing the surface, so every chunk carries real
+geometry. The player spawns above the terrain and settles; the static camera then
+looks out over rolling hills at ground level.
+
+### 6.2 Method
+
+`bench_dense.ps1 -Radius N` runs the release binary with
+`SUNSET_WORLD_RADIUS=N` and `SUNSET_BENCH_SECS=8` (2 s warm-up, then 8 s
+measured). All radii were measured back-to-back under sustained load.
+
+### 6.3 Results
+
+| Radius | Chunks | Opaque triangles | avg FPS | 0.1%-low FPS |
+| --- | --- | --- | --- | --- |
+| 4 | 81 | 48 304 | ~925 | ~74 |
+| 8 | 289 | 166 558 | 798 | 76 |
+| 16 | 1 089 | 627 210 | 567 | 71 |
+| 32 | 4 225 | 2 433 760 | 210 | 50 |
+| 48 | 9 409 | 5 414 838 | 115 | 39 |
+| 64 | 16 641 | 9 565 068 | 81 | 38 |
+
+(Transparent triangles are 0 — the hilly world is entirely opaque, so the
+transparent pass is skipped.)
+
+### 6.4 Analysis
+
+- **Triangle throughput rises with scene size** (≈44 M tris/s at radius 4 →
+  ≈775 M tris/s at radius 64). Small scenes are not triangle-bound: a fixed
+  per-frame overhead (present/clear/uniform write/simulation) dominates. Only as
+  the scene grows does raw geometry throughput approach the GPU's ceiling, and
+  even radius 64 has not plateaued it.
+- **The steep drop is between radius 16 and 32** (567 → 210 FPS, where the scene
+  passes ~2.4 M triangles). Beyond that the curve flattens roughly as
+  `FPS ∝ 1/triangles`, the classic triangle-bound regime.
+- **Single-threaded meshing is the dominant startup cost**, not the steady-state
+  cost. Release-mode mesh time ≈ 4 s at radius 32 and ≈ 14 s at radius 64 (all
+  chunks meshed synchronously before the first frame). The unoptimized dev build
+  exceeds 27 s for radius 32, confirming §11's deferred "off-thread chunk-mesh
+  worker scheduling" (M6 fallback) is what a dense world would need first.
+- **0.1%-low FPS is ~38–76 across all radii**, the same periodic stall noted in
+  §4 (once-per-second console write and/or background-window throttling), not
+  scene rendering. It is not a new regression.
+
+### 6.5 Conclusion
+
+At 16.6 k chunks / 9.5 M triangles the renderer holds ~81 FPS average (with
+frustum culling active), and the dominant scaling cost is triangle throughput
+plus per-chunk draw calls — not the deferred M8 batching machinery, which would
+matter most when many *visible* chunks each issue a tiny draw. Two follow-ups are
+now measurable rather than speculative:
+
+1. **Off-thread meshing** (M6 fallback) to remove the multi-second startup stall.
+2. **A draw-call-bound stress case** (a flat or shallow world maximizes visible
+   chunks per view) to decide whether batching/indirect is justified.
+
+> Caveat: these are sustained-load numbers (the GPU thermally throttles after the
+> larger scenes, so absolute FPS is lower than a cool run; the earlier §2 M5
+> number of ~1473 FPS is a cool-GPU dev-build figure and is not directly
+> comparable). The *relative* scaling is the robust signal here.

@@ -142,8 +142,23 @@ fn digit_slot(code: KeyCode) -> Option<usize> {
     }
 }
 
-/// Load the save, or generate the authored fixture on first launch.
+/// Load the save, or generate a world on first launch. Setting
+/// `SUNSET_WORLD_RADIUS` (an integer chunk radius) generates deterministic
+/// rolling-hill terrain spanning `(2*radius+1)` chunks on each side instead of
+/// the authored fixture — a scalability stress world for benchmarking.
 fn load_or_generate() -> (World, Player) {
+    // Explicit scalability override: `SUNSET_WORLD_RADIUS` always wins, so a
+    // benchmark run is unaffected by any development save on disk.
+    if let Some(radius) = std::env::var("SUNSET_WORLD_RADIUS")
+        .ok()
+        .and_then(|s| s.parse::<i32>().ok())
+    {
+        let world = fixture::hilly_world(radius);
+        // Spawn above the terrain at the fixture's position and settle on it.
+        let ground = fixture::terrain_height(8, 16) as f32;
+        let player = Player::new(Vec3::new(8.0, ground + 15.0, 16.0), 0.5, -0.25);
+        return (world, player);
+    }
     if let Ok(json) = std::fs::read_to_string(SAVE_PATH) {
         if let Ok((world, player)) = save::from_json(&json) {
             return (world, player);

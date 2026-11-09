@@ -2,6 +2,7 @@
 //! terrain generation (PRD 3.1).
 
 use crate::block::state_by_id;
+use crate::chunk::CHUNK_SIZE;
 use crate::world::World;
 
 /// The `building-yard` fixture: a small multi-chunk world centered on the
@@ -82,4 +83,73 @@ pub fn building_yard() -> World {
     world.set_block(-14, 7, 6, log_z);
 
     world
+}
+
+/// Deterministic rolling-hill terrain used for scalability benchmarking. Spans
+/// `radius` chunks in each horizontal direction (a `(2*radius+1)`-sided square
+/// centered at the origin). This is a development stress fixture, not authored
+/// content: the smooth height variation prevents greedy meshing from collapsing
+/// the surface, so each chunk carries real geometry.
+pub fn hilly_world(radius: i32) -> World {
+    let mut world = World::new();
+
+    let stone = state_by_id("minecraft:stone").expect("registered block");
+    let dirt = state_by_id("minecraft:dirt").expect("registered block");
+    let grass = state_by_id("minecraft:grass_block").expect("registered block");
+
+    let lo = -(radius * CHUNK_SIZE as i32);
+    let hi = (radius + 1) * CHUNK_SIZE as i32;
+    for wx in lo..hi {
+        for wz in lo..hi {
+            let top = terrain_height(wx, wz);
+            for wy in 0..=top {
+                // Stone base, a dirt band, and a grass surface layer.
+                let block = if wy == top {
+                    grass
+                } else if wy + 3 >= top {
+                    dirt
+                } else {
+                    stone
+                };
+                world.set_block(wx, wy, wz, block);
+            }
+        }
+    }
+
+    world
+}
+
+/// Deterministic terrain height (world Y) at horizontal world coordinates: a
+/// smooth sum of sines so neighbouring columns vary gradually (greedy meshing
+/// still merges runs, but the surface is never a single plane).
+pub fn terrain_height(wx: i32, wz: i32) -> i32 {
+    let x = wx as f32 * 0.11;
+    let z = wz as f32 * 0.13;
+    let h = 12.0 + 7.0 * x.sin() + 6.0 * z.cos() + 4.0 * (x * 0.7 + z * 0.9).sin();
+    h.max(0.0) as i32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chunk::CHUNK_HEIGHT;
+
+    #[test]
+    fn hilly_world_is_dense_and_bounded() {
+        let world = hilly_world(2);
+        // (2*2+1)^2 = 25 chunks, one per chunk coordinate in range.
+        assert_eq!(world.chunks().count(), 25);
+
+        // Every sampled column stays within the vertical extent.
+        for (wx, wz) in [(-32, -32), (0, 0), (31, 31), (-31, 31), (15, -16)] {
+            let h = terrain_height(wx, wz);
+            assert!(h >= 0 && h < CHUNK_HEIGHT as i32, "height {h} out of range");
+        }
+    }
+
+    #[test]
+    fn terrain_height_is_deterministic() {
+        assert_eq!(terrain_height(8, 16), terrain_height(8, 16));
+        assert_eq!(terrain_height(-5, 3), terrain_height(-5, 3));
+    }
 }
