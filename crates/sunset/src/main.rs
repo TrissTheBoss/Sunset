@@ -166,17 +166,17 @@ const VERTEX_LAYOUT: wgpu::VertexBufferLayout = wgpu::VertexBufferLayout {
         wgpu::VertexAttribute {
             offset: 12,
             shader_location: 1,
-            format: wgpu::VertexFormat::Float32x2,
+            format: wgpu::VertexFormat::Uint16x2,
+        },
+        wgpu::VertexAttribute {
+            offset: 16,
+            shader_location: 2,
+            format: wgpu::VertexFormat::Uint32,
         },
         wgpu::VertexAttribute {
             offset: 20,
-            shader_location: 2,
-            format: wgpu::VertexFormat::Float32x4,
-        },
-        wgpu::VertexAttribute {
-            offset: 36,
             shader_location: 3,
-            format: wgpu::VertexFormat::Float32x4,
+            format: wgpu::VertexFormat::Uint16x4,
         },
     ],
 };
@@ -184,9 +184,9 @@ const VERTEX_LAYOUT: wgpu::VertexBufferLayout = wgpu::VertexBufferLayout {
 const SHADER: &str = r#"
 struct VsIn {
     @location(0) position: vec3<f32>,
-    @location(1) uv: vec2<f32>,
-    @location(2) color: vec4<f32>,
-    @location(3) rect: vec4<f32>,
+    @location(1) uv: vec2<u32>,
+    @location(2) color: u32,
+    @location(3) rect: vec4<u32>,
 };
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
@@ -203,10 +203,17 @@ struct Camera {
 fn vs_main(in: VsIn) -> VsOut {
     var out: VsOut;
     out.clip = camera.view_proj * vec4<f32>(in.position, 1.0);
-    out.uv = in.uv;
-    out.color = in.color;
-    out.rect = in.rect;
+    out.uv = vec2<f32>(in.uv) / 256.0;
+    out.color = unpack_rgba8(in.color);
+    out.rect = vec4<f32>(in.rect) / 65535.0;
     return out;
+}
+fn unpack_rgba8(c: u32) -> vec4<f32> {
+    let r = f32((c >> 24u) & 0xffu) / 255.0;
+    let g = f32((c >> 16u) & 0xffu) / 255.0;
+    let b = f32((c >> 8u) & 0xffu) / 255.0;
+    let a = f32(c & 0xffu) / 255.0;
+    return vec4<f32>(r, g, b, a);
 }
 @group(0) @binding(1) var tex: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;

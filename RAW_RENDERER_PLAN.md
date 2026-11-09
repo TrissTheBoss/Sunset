@@ -1,6 +1,6 @@
 # Raw wgpu Renderer — Plan
 
-**Status:** M0–M6 implemented and measured; M7+ planned (M7+ = optimizations).
+**Status:** M0–M7 implemented and measured; M8+ planned (M8+ = optimizations).
 **Date:** 2026-11-08 (amended to add core renderer optimizations).
 
 This plan describes a minimal, custom raw renderer that escapes the fixed
@@ -407,7 +407,9 @@ Bevy reference).
 - **M6 — Incremental meshing + scheduling.** *Done.* Per-chunk meshes + revision
   dirty tracking with neighbour invalidation (synchronous rebuild; off-thread
   worker scheduling deferred via the plan's fallback). Boundary-edit unit test.
-- **M7 — Compact geometry + GPU arenas.** Section 10. Prereq: M1.
+- **M7 — Compact geometry + GPU arenas.** *Done.* Vertex packed 52 → 28 bytes
+  (u16 fixed-point UV, RGBA8 color, u16 normalized atlas rect); decoded in the
+  vertex shader. Quad-record reconstruction and GPU arenas remain deferred.
 - **M8 — Visibility + draw submission.** Section 11. Prereq: M6, M7.
 - **M9 — Transparency + shader efficiency.** Section 12. Prereq: M3.
 - **M10 — Resource reuse + backend efficiency.** Section 13. Prereq: M7, M8.

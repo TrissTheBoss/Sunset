@@ -19,9 +19,12 @@ use crate::assets::FaceTextures;
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
-    pub uv: [f32; 2],
-    pub color: [f32; 4],
-    pub rect: [f32; 4],
+    /// Tiled UV in fixed-point (×256); 0.5 steps (slab half-texture) stay exact.
+    pub uv: [u16; 2],
+    /// RGBA8-packed face shade/color.
+    pub color: u32,
+    /// Atlas rect in normalized fixed-point (×65535), i.e. `0..1`.
+    pub rect: [u16; 4],
 }
 
 /// An in-progress mesh (opaque or transparent).
@@ -47,10 +50,12 @@ impl MeshData {
         rect: [f32; 4],
     ) {
         let base = self.vertices.len() as u32;
+        let color = pack_color(color);
+        let rect = pack_rect(rect);
         for i in 0..4 {
             self.vertices.push(Vertex {
                 position: corners[i],
-                uv: uvs[i],
+                uv: pack_uv(uvs[i]),
                 color,
                 rect,
             });
@@ -58,6 +63,30 @@ impl MeshData {
         self.indices
             .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
+}
+
+/// Pack a tiled UV (multiples of 0.5) into fixed-point u16 (×256).
+fn pack_uv(uv: [f32; 2]) -> [u16; 2] {
+    [(uv[0] * 256.0).round() as u16, (uv[1] * 256.0).round() as u16]
+}
+
+/// Pack a `0..1` RGBA color into an RGBA8 u32.
+fn pack_color(c: [f32; 4]) -> u32 {
+    let r = (c[0].clamp(0.0, 1.0) * 255.0).round() as u32;
+    let g = (c[1].clamp(0.0, 1.0) * 255.0).round() as u32;
+    let b = (c[2].clamp(0.0, 1.0) * 255.0).round() as u32;
+    let a = (c[3].clamp(0.0, 1.0) * 255.0).round() as u32;
+    (r << 24) | (g << 16) | (b << 8) | a
+}
+
+/// Pack a `0..1` atlas rect into normalized fixed-point u16 (×65535).
+fn pack_rect(rect: [f32; 4]) -> [u16; 4] {
+    [
+        (rect[0] * 65535.0).round() as u16,
+        (rect[1] * 65535.0).round() as u16,
+        (rect[2] * 65535.0).round() as u16,
+        (rect[3] * 65535.0).round() as u16,
+    ]
 }
 
 /// Neighbor offsets for each face (indexed like `face_corners`).
@@ -415,6 +444,13 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use sunset_core::fixture;
+
+    /// The packed vertex is 28 bytes: 12 (position) + 4 (uv) + 4 (color) + 8
+    /// (rect), down from 52. Guards against accidental regrowth.
+    #[test]
+    fn vertex_is_compact() {
+        assert_eq!(std::mem::size_of::<Vertex>(), 28);
+    }
 
     /// A boundary edit (changing a block on a chunk edge) must produce, after
     /// re-meshing only the affected chunk and its four neighbours, exactly the
