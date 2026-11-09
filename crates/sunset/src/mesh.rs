@@ -16,7 +16,7 @@ use crate::assets::FaceTextures;
 /// texture's atlas rect (wrapped by `fract` in the fragment shader so merged
 /// rectangles tile instead of stretch).
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     pub position: [f32; 3],
     pub uv: [f32; 2],
@@ -25,6 +25,7 @@ pub struct Vertex {
 }
 
 /// An in-progress mesh (opaque or transparent).
+#[derive(Debug, PartialEq)]
 pub struct MeshData {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
@@ -405,5 +406,78 @@ pub fn build_chunk_meshes(
         }
     }
 
+
     (opaque, transparent)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use sunset_core::fixture;
+
+    /// A boundary edit (changing a block on a chunk edge) must produce, after
+    /// re-meshing only the affected chunk and its four neighbours, exactly the
+    /// same meshes as a full rebuild of every chunk.
+    #[test]
+    fn boundary_edit_matches_full_rebuild() {
+        let face_textures: HashMap<BlockState, FaceTextures> = HashMap::new();
+        let uv: HashMap<String, [f32; 4]> = HashMap::new();
+
+        let mut world = fixture::building_yard();
+
+        // Pre-edit meshes for every chunk (the "incremental" starting point).
+        let mut incremental: HashMap<(i32, i32), (MeshData, MeshData)> = HashMap::new();
+        for chunk in world.chunks() {
+            incremental.insert(
+                (chunk.cx, chunk.cz),
+                build_chunk_meshes(&world, chunk, &face_textures, &uv),
+            );
+        }
+
+        // Break a block on a chunk boundary: the cobblestone wall at x=0 is the
+        // left edge of chunk cx=0 (adjacent to chunk cx=-1 across the seam).
+        let (wx, wy, wz): (i32, i32, i32) = (0, 7, 0);
+        let edited = (
+            wx.div_euclid(CHUNK_SIZE as i32),
+            wz.div_euclid(CHUNK_SIZE as i32),
+        );
+        world.set_block(wx, wy, wz, AIR);
+
+        // Re-mesh only the edited chunk + its four neighbours.
+        let mut dirty = vec![
+            edited,
+            (edited.0 + 1, edited.1),
+            (edited.0 - 1, edited.1),
+            (edited.0, edited.1 + 1),
+            (edited.0, edited.1 - 1),
+        ];
+        dirty.sort_unstable();
+        dirty.dedup();
+        for (cx, cz) in dirty {
+            if let Some(chunk) = world.get_chunk(cx, cz) {
+                incremental.insert(
+                    (cx, cz),
+                    build_chunk_meshes(&world, chunk, &face_textures, &uv),
+                );
+            }
+        }
+
+        // Full rebuild reference after the edit.
+        let mut full: HashMap<(i32, i32), (MeshData, MeshData)> = HashMap::new();
+        for chunk in world.chunks() {
+            full.insert(
+                (chunk.cx, chunk.cz),
+                build_chunk_meshes(&world, chunk, &face_textures, &uv),
+            );
+        }
+
+        assert_eq!(incremental.len(), full.len(), "chunk set must match");
+        for (key, (o, t)) in &full {
+            let (io, it) = &incremental[key];
+            assert_eq!(io, o, "opaque mesh mismatch for chunk {key:?}");
+            assert_eq!(it, t, "transparent mesh mismatch for chunk {key:?}");
+        }
+    }
+}
+

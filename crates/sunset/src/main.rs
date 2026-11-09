@@ -256,23 +256,36 @@ fn fs_main() -> @location(0) vec4<f32> {
 }
 "#;
 
-/// One drawable mesh: a pipeline plus its vertex/index buffers.
-struct Drawable {
-    pipeline: wgpu::RenderPipeline,
+/// GPU-side mesh: the vertex/index buffers for one drawable (opaque or
+/// transparent). The pipeline is shared and stored separately.
+struct Mesh {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
 }
 
-/// Everything needed to draw the world's opaque and transparent meshes.
+/// GPU-side per-chunk meshes (opaque + transparent).
+struct GpuChunk {
+    opaque: Mesh,
+    transparent: Mesh,
+}
+
+/// CPU-side per-chunk meshes produced by the mesher.
+struct ChunkMesh {
+    opaque: MeshData,
+    transparent: MeshData,
+}
+
+/// Everything needed to draw the world: shared pipelines plus per-chunk meshes.
 struct Renderer {
-    opaque: Drawable,
-    transparent: Drawable,
+    opaque_pipeline: wgpu::RenderPipeline,
+    transparent_pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
     depth_view: wgpu::TextureView,
     line_pipeline: wgpu::RenderPipeline,
     line_vertex_buffer: wgpu::Buffer,
+    chunks: HashMap<(i32, i32), GpuChunk>,
 }
 
 impl Renderer {
@@ -284,8 +297,7 @@ impl Renderer {
         height: u32,
         format: wgpu::TextureFormat,
         atlas: &image::RgbaImage,
-        opaque: &MeshData,
-        transparent: &MeshData,
+        chunks: &HashMap<(i32, i32), ChunkMesh>,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shader"),
@@ -431,25 +443,14 @@ impl Renderer {
 
         let depth_view = create_depth_view(device, width, height);
 
-        let opaque_drawable = create_drawable(
+        let opaque_pipeline = create_pipeline(device, &shader, &pipeline_layout, format, None, true);
+        let transparent_pipeline = create_pipeline(
             device,
-            queue,
-            &shader,
-            &pipeline_layout,
-            format,
-            None,
-            true,
-            opaque,
-        );
-        let transparent_drawable = create_drawable(
-            device,
-            queue,
             &shader,
             &pipeline_layout,
             format,
             Some(wgpu::BlendState::ALPHA_BLENDING),
             false,
-            transparent,
         );
 
         let line_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -504,14 +505,23 @@ impl Renderer {
             bytemuck::cast_slice(&unit_cube_outline()),
         );
 
+        // Upload per-chunk meshes.
+        let mut gpu_chunks = HashMap::new();
+        for (&key, chunk_mesh) in chunks {
+            let opaque = create_mesh(device, queue, &chunk_mesh.opaque);
+            let transparent = create_mesh(device, queue, &chunk_mesh.transparent);
+            gpu_chunks.insert(key, GpuChunk { opaque, transparent });
+        }
+
         Self {
-            opaque: opaque_drawable,
-            transparent: transparent_drawable,
+            opaque_pipeline,
+            transparent_pipeline,
             bind_group,
             uniform_buffer,
             depth_view,
             line_pipeline,
             line_vertex_buffer,
+            chunks: gpu_chunks,
         }
     }
 
@@ -553,13 +563,24 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            self.draw(&mut pass, &self.opaque);
+            pass.set_pipeline(&self.opaque_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            for chunk in self.chunks.values() {
+                if chunk.opaque.index_count > 0 {
+                    pass.set_vertex_buffer(0, chunk.opaque.vertex_buffer.slice(..));
+                    pass.set_index_buffer(
+                        chunk.opaque.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    pass.draw_indexed(0..chunk.opaque.index_count, 0, 0..1);
+                }
+            }
         }
 
         // Transparent pass: loads the opaque color/depth, alpha-blends, and
         // tests depth without writing it (so glass is correctly occluded and
         // occludes, but doesn't punch holes in the depth buffer).
-        if self.transparent.index_count > 0 {
+        if self.chunks.values().any(|c| c.transparent.index_count > 0) {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("transparent"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -583,7 +604,18 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            self.draw(&mut pass, &self.transparent);
+            pass.set_pipeline(&self.transparent_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            for chunk in self.chunks.values() {
+                if chunk.transparent.index_count > 0 {
+                    pass.set_vertex_buffer(0, chunk.transparent.vertex_buffer.slice(..));
+                    pass.set_index_buffer(
+                        chunk.transparent.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    pass.draw_indexed(0..chunk.transparent.index_count, 0, 0..1);
+                }
+            }
         }
 
         // Highlight pass: draw the targeted block's outline over the scene.
@@ -620,31 +652,19 @@ impl Renderer {
         queue.submit([encoder.finish()]);
     }
 
-    /// Re-upload the opaque and transparent meshes after a block edit. The
-    /// pipelines are reused; only the vertex/index buffers are recreated.
-    fn rebuild_meshes(
+    /// Re-upload a single chunk's meshes after a block edit.
+    fn update_chunk(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        opaque: &MeshData,
-        transparent: &MeshData,
+        cx: i32,
+        cz: i32,
+        mesh: &ChunkMesh,
     ) {
-        let (vb, ib, n) = create_mesh_buffers(device, queue, opaque);
-        self.opaque.vertex_buffer = vb;
-        self.opaque.index_buffer = ib;
-        self.opaque.index_count = n;
-        let (vb, ib, n) = create_mesh_buffers(device, queue, transparent);
-        self.transparent.vertex_buffer = vb;
-        self.transparent.index_buffer = ib;
-        self.transparent.index_count = n;
-    }
-
-    fn draw(&self, pass: &mut wgpu::RenderPass<'_>, drawable: &Drawable) {
-        pass.set_pipeline(&drawable.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_vertex_buffer(0, drawable.vertex_buffer.slice(..));
-        pass.set_index_buffer(drawable.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        pass.draw_indexed(0..drawable.index_count, 0, 0..1);
+        let opaque = create_mesh(device, queue, &mesh.opaque);
+        let transparent = create_mesh(device, queue, &mesh.transparent);
+        self.chunks
+            .insert((cx, cz), GpuChunk { opaque, transparent });
     }
 }
 
@@ -671,25 +691,30 @@ fn create_mesh_buffers(
     (vertex_buffer, index_buffer, mesh.indices.len() as u32)
 }
 
-/// Build a mesh's render pipeline (buffers are created separately so they can
-/// be rebuilt after an edit without recreating the pipeline).
+/// Create a GPU mesh (vertex/index buffers) from CPU mesh data.
+fn create_mesh(device: &wgpu::Device, queue: &wgpu::Queue, mesh: &MeshData) -> Mesh {
+    let (vertex_buffer, index_buffer, index_count) = create_mesh_buffers(device, queue, mesh);
+    Mesh {
+        vertex_buffer,
+        index_buffer,
+        index_count,
+    }
+}
+
+/// Build a triangle-list render pipeline.
 ///
 /// `blend` selects alpha blending (transparent) vs. `None` (opaque), and
 /// `depth_write` controls whether the pass writes to the depth buffer.
 #[allow(clippy::too_many_arguments)]
-fn create_drawable(
+fn create_pipeline(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
     shader: &wgpu::ShaderModule,
     pipeline_layout: &wgpu::PipelineLayout,
     format: wgpu::TextureFormat,
     blend: Option<wgpu::BlendState>,
     depth_write: bool,
-    mesh: &MeshData,
-) -> Drawable {
-    let (vertex_buffer, index_buffer, index_count) = create_mesh_buffers(device, queue, mesh);
-
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("pipeline"),
         layout: Some(pipeline_layout),
         vertex: wgpu::VertexState {
@@ -726,14 +751,7 @@ fn create_drawable(
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,
-    });
-
-    Drawable {
-        pipeline,
-        vertex_buffer,
-        index_buffer,
-        index_count,
-    }
+    })
 }
 
 fn create_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
@@ -752,26 +770,6 @@ fn create_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Te
         view_formats: &[],
     });
     texture.create_view(&wgpu::TextureViewDescriptor::default())
-}
-
-/// Mesh every chunk in the world into combined opaque + transparent meshes.
-fn mesh_world(
-    world: &World,
-    face_textures: &HashMap<BlockState, FaceTextures>,
-    uv: &HashMap<String, [f32; 4]>,
-) -> (MeshData, MeshData) {
-    let mut opaque = MeshData::new();
-    let mut transparent = MeshData::new();
-    for chunk in world.chunks() {
-        let (o, t) = mesh::build_chunk_meshes(world, chunk, face_textures, uv);
-        let obase = opaque.vertices.len() as u32;
-        opaque.vertices.extend(o.vertices);
-        opaque.indices.extend(o.indices.iter().map(|i| obase + i));
-        let tbase = transparent.vertices.len() as u32;
-        transparent.vertices.extend(t.vertices);
-        transparent.indices.extend(t.indices.iter().map(|i| tbase + i));
-    }
-    (opaque, transparent)
 }
 
 /// The 24 static line-list vertices of a unit cube (`0..1`), transformed by the
@@ -842,8 +840,8 @@ struct State {
     /// Texture data retained so the mesh can be rebuilt after an edit.
     face_textures: HashMap<BlockState, FaceTextures>,
     uv: HashMap<String, [f32; 4]>,
-    /// Sum of chunk revisions, used to detect edits that need a re-mesh.
-    world_revision: u64,
+    /// Per-chunk revisions at last mesh, used to detect which chunks changed.
+    chunk_revisions: HashMap<(i32, i32), u64>,
     last_time: Instant,
     accumulator: f32,
     frames: u64,
@@ -902,16 +900,26 @@ impl State {
                 }
             };
         let (world, player) = load_or_generate();
-        let (opaque, transparent) = mesh_world(&world, &face_textures, &uv);
+
+        // Build per-chunk meshes (never a single combined world mesh, so an
+        // edit can re-mesh just the affected chunk and its neighbours).
+        let mut chunk_meshes: HashMap<(i32, i32), ChunkMesh> = HashMap::new();
+        let mut chunk_revisions: HashMap<(i32, i32), u64> = HashMap::new();
+        for chunk in world.chunks() {
+            let (opaque, transparent) =
+                mesh::build_chunk_meshes(&world, chunk, &face_textures, &uv);
+            chunk_meshes.insert((chunk.cx, chunk.cz), ChunkMesh { opaque, transparent });
+            chunk_revisions.insert((chunk.cx, chunk.cz), chunk.revision);
+        }
+        let opaque_verts: usize = chunk_meshes.values().map(|c| c.opaque.vertices.len()).sum();
+        let opaque_tris: usize = chunk_meshes.values().map(|c| c.opaque.indices.len() / 3).sum();
+        let transparent_tris: usize = chunk_meshes
+            .values()
+            .map(|c| c.transparent.indices.len() / 3)
+            .sum();
         println!(
-            "opaque mesh: {} vertices, {} triangles",
-            opaque.vertices.len(),
-            opaque.indices.len() / 3
-        );
-        println!(
-            "transparent mesh: {} vertices, {} triangles",
-            transparent.vertices.len(),
-            transparent.indices.len() / 3
+            "chunks: {} | opaque: {opaque_verts} vertices, {opaque_tris} triangles | transparent: {transparent_tris} triangles",
+            chunk_meshes.len()
         );
 
         let renderer = Renderer::new(
@@ -921,13 +929,11 @@ impl State {
             config.height,
             config.format,
             &atlas,
-            &opaque,
-            &transparent,
+            &chunk_meshes,
         );
 
         // Authoritative simulation.
         let sim = Simulation::new(world, player);
-        let world_revision: u64 = sim.world.chunks().map(|c| c.revision).sum();
         let bench_secs = std::env::var("SUNSET_BENCH_SECS")
             .ok()
             .and_then(|s| s.parse::<f32>().ok());
@@ -947,7 +953,7 @@ impl State {
             target: None,
             face_textures,
             uv,
-            world_revision,
+            chunk_revisions,
             last_time: Instant::now(),
             accumulator: 0.0,
             frames: 0,
@@ -973,11 +979,50 @@ impl State {
         }
     }
 
-    fn rebuild_mesh(&mut self) {
-        let (opaque, transparent) = mesh_world(&self.sim.world, &self.face_textures, &self.uv);
-        if let Some(r) = self.renderer.as_mut() {
-            r.rebuild_meshes(&self.device, &self.queue, &opaque, &transparent);
+    /// Re-mesh any chunks whose revision changed, plus their boundary neighbours
+    /// (whose face visibility depends on the edit).
+    fn sync_meshes(&mut self) {
+        let mut changed: Vec<(i32, i32)> = Vec::new();
+        for chunk in self.sim.world.chunks() {
+            let key = (chunk.cx, chunk.cz);
+            let unchanged = self
+                .chunk_revisions
+                .get(&key)
+                .is_some_and(|r| *r == chunk.revision);
+            if !unchanged {
+                changed.push(key);
+            }
         }
+        if changed.is_empty() {
+            return;
+        }
+        let mut dirty: Vec<(i32, i32)> = Vec::new();
+        for (cx, cz) in changed {
+            dirty.push((cx, cz));
+            dirty.push((cx + 1, cz));
+            dirty.push((cx - 1, cz));
+            dirty.push((cx, cz + 1));
+            dirty.push((cx, cz - 1));
+        }
+        dirty.sort_unstable();
+        dirty.dedup();
+        for (cx, cz) in dirty {
+            self.remesh_chunk(cx, cz);
+        }
+    }
+
+    /// Re-mesh and re-upload a single chunk.
+    fn remesh_chunk(&mut self, cx: i32, cz: i32) {
+        let Some(chunk) = self.sim.world.get_chunk(cx, cz) else {
+            return;
+        };
+        let (opaque, transparent) =
+            mesh::build_chunk_meshes(&self.sim.world, chunk, &self.face_textures, &self.uv);
+        let mesh = ChunkMesh { opaque, transparent };
+        if let Some(r) = self.renderer.as_mut() {
+            r.update_chunk(&self.device, &self.queue, cx, cz, &mesh);
+        }
+        self.chunk_revisions.insert((cx, cz), chunk.revision);
     }
 
     fn render(&mut self) -> bool {
@@ -1051,12 +1096,8 @@ impl State {
         self.intent.block_action = None;
         self.intent.select_slot = None;
 
-        // Re-mesh if any chunk revision changed (a block edit landed).
-        let revision: u64 = self.sim.world.chunks().map(|c| c.revision).sum();
-        if revision != self.world_revision {
-            self.world_revision = revision;
-            self.rebuild_mesh();
-        }
+        // Re-mesh only the chunks (and neighbours) that changed.
+        self.sync_meshes();
 
         // Interpolate the camera between the previous and current fixed-tick
         // positions for smooth motion.
