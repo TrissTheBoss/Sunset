@@ -146,6 +146,11 @@ impl ApplicationHandler for App {
         };
         match Renderer::new(Arc::clone(&window), &init) {
             Ok(renderer) => {
+                eprintln!(
+                    "adapter: {}; present mode: {}",
+                    renderer.adapter_name(),
+                    renderer.present_mode_label()
+                );
                 self.window = Some(window);
                 self.renderer = Some(renderer);
                 self.run_start = Instant::now();

@@ -11,6 +11,7 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration,
     present_mode: wgpu::PresentMode,
     size: (u32, u32),
+    adapter_name: String,
 }
 
 pub struct RendererInit {
@@ -68,6 +69,8 @@ impl Renderer {
         let config = surface
             .get_default_config(&adapter, init.width, init.height)
             .ok_or_else(|| "surface is not supported by the adapter".to_string())?;
+        let info = adapter.get_info();
+        let adapter_name = format!("{} ({:?}, driver {})", info.name, info.backend, info.driver);
         let mut renderer = Self {
             surface,
             device,
@@ -75,9 +78,14 @@ impl Renderer {
             config,
             present_mode,
             size: (init.width, init.height),
+            adapter_name,
         };
         renderer.reconfigure();
         Ok(renderer)
+    }
+
+    pub fn adapter_name(&self) -> &str {
+        &self.adapter_name
     }
 
     pub fn present_mode(&self) -> wgpu::PresentMode {
