@@ -1,6 +1,7 @@
 use command_group::CommandGroup;
 use serde::Serialize;
-use std::process::{Command, ExitCode, ExitStatus};
+use std::io::Read;
+use std::process::{Command, ExitCode, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +36,74 @@ pub struct RunReport {
     pub exit_code: u8,
     pub duration_ms: u128,
     pub timestamp: u64,
+}
+
+pub struct CapturedOutput {
+    pub outcome: RunOutcome,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+pub fn run_captured(program: &str, args: &[String], timeout: Duration) -> CapturedOutput {
+    let mut command = Command::new(program);
+    command.args(args);
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    let mut child = match command.group_spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            let outcome = if error.kind() == std::io::ErrorKind::NotFound {
+                RunOutcome::MissingPrerequisite
+            } else {
+                RunOutcome::IoError
+            };
+            return CapturedOutput {
+                outcome,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            };
+        }
+    };
+    let stdout_handle = child.inner().stdout.take().map(spawn_reader);
+    let stderr_handle = child.inner().stderr.take().map(spawn_reader);
+    let deadline = Instant::now() + timeout;
+    let outcome = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break classify_status(status),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break RunOutcome::TimedOut;
+                }
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break RunOutcome::IoError;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    CapturedOutput {
+        outcome,
+        stdout: join_reader(stdout_handle),
+        stderr: join_reader(stderr_handle),
+    }
+}
+
+fn spawn_reader<R: Read + Send + 'static>(mut stream: R) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = stream.read_to_end(&mut buffer);
+        buffer
+    })
+}
+
+fn join_reader(handle: Option<std::thread::JoinHandle<Vec<u8>>>) -> Vec<u8> {
+    handle
+        .map(|h| h.join().unwrap_or_default())
+        .unwrap_or_default()
 }
 
 pub fn run_child(program: &str, args: &[String], timeout: Duration) -> RunOutcome {

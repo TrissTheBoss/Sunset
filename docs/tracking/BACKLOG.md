@@ -61,7 +61,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: fault tests: hanging child → 4, crashing child → 3, missing prerequisite → 2; no orphan processes after each.
 
 ### T-103 Bench harness
-- Status: NOT STARTED · REQ-03 · Depends: T-101, T-102
+- Status: IMPLEMENTED · REQ-03 · Depends: T-101, T-102
 - Do: `cargo xtask bench --suite <id> [--gate]` reads `bench/scenes/<id>.toml`, launches the client binary with the manifest, collects the metrics JSON, runs repetitions in alternating order, flags noisy/throttled runs, and applies the gates from [09](../09-Benchmarks.md).
 - Accept: synthetic fake client tests: a fake at 2,900 FPS fails PERF-T1 (exit 1), at 3,100 passes, a noisy fake → INCONCLUSIVE.
 

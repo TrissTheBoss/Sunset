@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M1 IN PROGRESS** (M0 code complete, exit blocked on owner actions). Current task: T-102 done (next: [T-103](BACKLOG.md#t-103-bench-harness)).
+Current milestone: **M1 IN PROGRESS** (M0 code complete, exit blocked on owner actions). Current task: T-103 done (next: [T-104](BACKLOG.md#t-104-harness-self-tests)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -9,7 +9,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | Milestone | Status | Evidence |
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
-| M1 | IN PROGRESS | T-101, T-102 complete (metrics + runner core) |
+| M1 | IN PROGRESS | T-101, T-102, T-103 complete (metrics + runner core + bench harness) |
 | M2 | NOT STARTED | — |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
@@ -48,6 +48,18 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-11 · T-103 Bench harness · IMPLEMENTED
+Change: Added `cargo xtask bench --suite <id> [--gate] [--program <path>]`. Reads bench/scenes/<id>.toml (scene name + timing runs/warmup/sampling), launches the client as `<program> <manifest-path> <run-index>`, captures stdout/stderr (new runner::run_captured with piped stdio + process-group timeout), parses the metrics JSON (schema 1: frames/elapsed_s/present_mode/intervals_ms), computes throughput = frames/elapsed and p99/p99.9 via sunset_metrics::percentile, applies PERF-T1/PERF-T2 from [09](09-Benchmarks.md), flags Fifo present mode, and flags run-to-run CV > 3% as INCONCLUSIVE. Writes runs/<run-id>/bench.json + bench.md. Exit 0 pass / 1 fail or inconclusive / 2 blocked / 3 crash / 4 timeout.
+Files / commit: xtask/src/bench.rs (new), xtask/src/runner.rs (run_captured), xtask/src/main.rs (bench subcommand), xtask/Cargo.toml + Cargo.lock (sunset-metrics path dep) (uncommitted).
+Commands and exit codes:
+  cargo test -p xtask → 0 (25 tests, incl. 6 gate unit tests + 3 end-to-end fake clients: 2900→fail, 3100→pass, noisy→inconclusive)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0
+  cargo xtask bench --suite bench-01 --gate --non-interactive → 2 (BLOCKED: target/release/sunset-client not built; expected until T-201)
+Artifacts (run IDs): bench BLOCKED report written under runs/ (gitignored).
+Blockers: none for M1 code. Real BENCH-01 gated run still blocked on the client binary (T-201) and the bench-01 save + owner baseline (owner actions).
+Next smallest action: T-104 harness self-tests.
 
 ### 2026-11-11 · T-102 Runner core · IMPLEMENTED
 Change: Added the xtask runner core. run_child spawns a child in a process group (command-group), waits with a timeout, kills the whole group on timeout, and classifies outcomes. Exit codes: 0 pass, 1 assertion, 2 missing prerequisite, 3 crash, 4 timeout. Writes runs/<run-id>/report.json + report.md; `cargo xtask run --id --timeout-ms --program [--arg...]` records a run and `cargo xtask report --run <id>` prints it.

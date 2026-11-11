@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod bench;
 mod check;
 mod doctor;
 mod inventory;
@@ -53,6 +54,16 @@ enum Command {
         #[arg(long)]
         arg: Vec<String>,
     },
+    Bench {
+        #[arg(long)]
+        suite: String,
+        #[arg(long)]
+        gate: bool,
+        #[arg(long)]
+        program: Option<String>,
+        #[arg(long)]
+        non_interactive: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -69,6 +80,12 @@ fn main() -> ExitCode {
             program,
             arg,
         } => runner::run_cli(&id, timeout_ms, &program, &arg),
+        Command::Bench {
+            suite,
+            gate,
+            program,
+            non_interactive: _,
+        } => bench::run_cli(&suite, gate, program.as_deref()),
     }
 }
 
