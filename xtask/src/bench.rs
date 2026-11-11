@@ -273,11 +273,17 @@ fn run_bench(
                 }
                 run_results.push(RunResult::empty(index, "timed_out", String::new(), stderr));
             }
-            RunOutcome::Crashed | RunOutcome::IoError => {
+            RunOutcome::Crashed => {
                 if first_hard_exit.is_none() {
                     first_hard_exit = Some(3);
                 }
                 run_results.push(RunResult::empty(index, "crashed", String::new(), stderr));
+            }
+            RunOutcome::IoError => {
+                if first_hard_exit.is_none() {
+                    first_hard_exit = Some(3);
+                }
+                run_results.push(RunResult::empty(index, "io-error", String::new(), stderr));
             }
             RunOutcome::MissingPrerequisite => {
                 if first_hard_exit.is_none() {

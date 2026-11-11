@@ -66,7 +66,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: synthetic fake client tests: a fake at 2,900 FPS fails PERF-T1 (exit 1), at 3,100 passes, a noisy fake → INCONCLUSIVE.
 
 ### T-104 Harness self-tests
-- Status: NOT STARTED · REQ-18 · Depends: T-103
+- Status: IMPLEMENTED · REQ-18 · Depends: T-103
 - Do: injected faults from [07](../07-Automated-Testing.md) that exist so far (allocation in the frame scope, 2 ms stall, timed-out child, changed hash); each must fail for the intended reason.
 - Accept: `cargo xtask test --suite harness` → 0 with every fault detected.
 

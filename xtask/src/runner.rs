@@ -44,12 +44,38 @@ pub struct CapturedOutput {
     pub stderr: Vec<u8>,
 }
 
+fn spawn_group(command: &mut Command) -> Result<command_group::GroupChild, std::io::Error> {
+    let mut attempt = 0u32;
+    loop {
+        match command.group_spawn() {
+            Ok(child) => return Ok(child),
+            Err(error) if is_transient(&error) => {
+                attempt += 1;
+                if attempt >= 3 {
+                    return Err(error);
+                }
+                std::thread::sleep(Duration::from_millis(25 * u64::from(attempt)));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn is_transient(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock
+            | std::io::ErrorKind::Interrupted
+            | std::io::ErrorKind::ExecutableFileBusy
+    )
+}
+
 pub fn run_captured(program: &str, args: &[String], timeout: Duration) -> CapturedOutput {
     let mut command = Command::new(program);
     command.args(args);
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
-    let mut child = match command.group_spawn() {
+    let mut child = match spawn_group(&mut command) {
         Ok(child) => child,
         Err(error) => {
             let outcome = if error.kind() == std::io::ErrorKind::NotFound {
@@ -77,6 +103,7 @@ pub fn run_captured(program: &str, args: &[String], timeout: Duration) -> Captur
                     break RunOutcome::TimedOut;
                 }
             }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(_) => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -109,7 +136,7 @@ fn join_reader(handle: Option<std::thread::JoinHandle<Vec<u8>>>) -> Vec<u8> {
 pub fn run_child(program: &str, args: &[String], timeout: Duration) -> RunOutcome {
     let mut command = Command::new(program);
     command.args(args);
-    let mut child = match command.group_spawn() {
+    let mut child = match spawn_group(&mut command) {
         Ok(child) => child,
         Err(error) => {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -123,6 +150,7 @@ pub fn run_child(program: &str, args: &[String], timeout: Duration) -> RunOutcom
         match child.try_wait() {
             Ok(Some(status)) => return classify_status(status),
             Ok(None) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(_) => return RunOutcome::IoError,
         }
         if Instant::now() >= deadline {

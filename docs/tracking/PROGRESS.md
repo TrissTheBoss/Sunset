@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M1 IN PROGRESS** (M0 code complete, exit blocked on owner actions). Current task: T-103 done (next: [T-104](BACKLOG.md#t-104-harness-self-tests)).
+Current milestone: **M1 IN PROGRESS** (M0 code complete, exit blocked on owner actions). Current task: T-104 done (next: [M2 T-201](BACKLOG.md#t-201-device-window-and-frame-loop)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -9,7 +9,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | Milestone | Status | Evidence |
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
-| M1 | IN PROGRESS | T-101, T-102, T-103 complete (metrics + runner core + bench harness) |
+| M1 | IN PROGRESS | T-101..T-104 complete (metrics + runner core + bench harness + harness self-tests) |
 | M2 | NOT STARTED | — |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
@@ -60,6 +60,19 @@ Commands and exit codes:
 Artifacts (run IDs): bench BLOCKED report written under runs/ (gitignored).
 Blockers: none for M1 code. Real BENCH-01 gated run still blocked on the client binary (T-201) and the bench-01 save + owner baseline (owner actions).
 Next smallest action: T-104 harness self-tests.
+
+### 2026-11-11 · T-104 Harness self-tests · IMPLEMENTED
+Change: Added `cargo xtask test --suite harness`. Runs four injected-fault probes and verifies each is detected for the intended reason: allocation-in-frame-scope (counting allocator via sunset_metrics::count_alloc), 2ms-stall (interval ring max > 0.50 ms budget), timed-out-child (runner RunOutcome::TimedOut), changed-hash (SHA-256 mismatch via lock::hex_sha256). Also hardened the runner against transient process errors: spawn_group retries WouldBlock/Interrupted/ExecutableFileBusy, and both run_child/run_captured retry Interrupted (EINTR) from waitpid; the bench report now distinguishes crashed vs io-error. This fixes an intermittent ETXTBSY failure in the bench fake-client tests under parallel test load.
+Files / commit: xtask/src/test.rs (new), xtask/src/main.rs (test subcommand), xtask/src/runner.rs (spawn_group + EINTR/ETXTBSY retry), xtask/src/lock.rs (hex_sha256 pub(crate)), xtask/src/bench.rs (crashed/io-error split) (uncommitted).
+Commands and exit codes:
+  cargo test -p xtask → 0 (29 tests, incl. 4 harness probe unit tests)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask test --suite harness --non-interactive → 0 (4/4 faults detected)
+  cargo xtask test --suite nope --non-interactive → 2 (unknown suite)
+  cargo xtask check --non-interactive → 0
+Artifacts (run IDs): none.
+Blockers: none for M1 code. M1 code path is now complete (T-101..T-104); M1 exit still blocked on the M2 client binary + bench-01 save + owner baseline.
+Next smallest action: T-201 device, window and frame loop (M2).
 
 ### 2026-11-11 · T-102 Runner core · IMPLEMENTED
 Change: Added the xtask runner core. run_child spawns a child in a process group (command-group), waits with a timeout, kills the whole group on timeout, and classifies outcomes. Exit codes: 0 pass, 1 assertion, 2 missing prerequisite, 3 crash, 4 timeout. Writes runs/<run-id>/report.json + report.md; `cargo xtask run --id --timeout-ms --program [--arg...]` records a run and `cargo xtask report --run <id>` prints it.

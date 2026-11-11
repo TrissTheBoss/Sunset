@@ -185,7 +185,7 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(hex_sha256(&bytes))
 }
 
-fn hex_sha256(bytes: &[u8]) -> String {
+pub(crate) fn hex_sha256(bytes: &[u8]) -> String {
     use std::fmt::Write;
     let mut hasher = Sha256::new();
     hasher.update(bytes);

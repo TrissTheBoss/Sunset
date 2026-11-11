@@ -7,6 +7,7 @@ mod inventory;
 mod lint;
 mod lock;
 mod runner;
+mod test;
 
 use clap::{Parser, Subcommand};
 use std::path::Path;
@@ -64,6 +65,12 @@ enum Command {
         #[arg(long)]
         non_interactive: bool,
     },
+    Test {
+        #[arg(long)]
+        suite: String,
+        #[arg(long)]
+        non_interactive: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -86,6 +93,10 @@ fn main() -> ExitCode {
             program,
             non_interactive: _,
         } => bench::run_cli(&suite, gate, program.as_deref()),
+        Command::Test {
+            suite,
+            non_interactive: _,
+        } => test::run_cli(&suite),
     }
 }
 
