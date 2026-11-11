@@ -2,7 +2,7 @@
 
 Denominators come from `cargo xtask inventory` (T-006); until then they are UNKNOWN. Domains and milestones per [02](../02-Parity.md). Counts never shrink silently: new inventory entries increase the denominator.
 
-Target lock: NOT RECORDED.
+Target lock: 26.3 (protocol 777, resource pack 97, data pack 121, asset index 34).
 
 | Domain | Required (inventory) | Inventoried | Implemented | Differential verified | Release verified | Milestone |
 | --- | --- | --- | --- | --- | --- | --- |

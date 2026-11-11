@@ -2,6 +2,7 @@
 
 mod check;
 mod doctor;
+mod inventory;
 mod lint;
 mod lock;
 
@@ -33,6 +34,10 @@ enum Command {
         #[arg(long)]
         non_interactive: bool,
     },
+    Inventory {
+        #[arg(long)]
+        non_interactive: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -41,6 +46,7 @@ fn main() -> ExitCode {
         Command::Lint { non_interactive: _ } => lint::run_cli(),
         Command::Check { non_interactive: _ } => check::run(),
         Command::Lock { non_interactive: _ } => lock::run(),
+        Command::Inventory { non_interactive: _ } => inventory::run(),
     }
 }
 

@@ -39,7 +39,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: hashing tested on synthetic fixture files; a real run either produces the lock or a BLOCKED report; nothing proprietary is committed (`git status` review).
 
 ### T-006 Inventory via data generator
-- Status: READY · REQ-02 · Depends: T-005
+- Status: IMPLEMENTED · REQ-02 · Depends: T-005
 - Do: `cargo xtask inventory` runs the pinned server jar's report generator into the private root with a timeout, parses the report files that exist, and writes counts per parity domain into `docs/tracking/PARITY.md`. Missing Java or jar → 2.
 - Accept: parser tests on small synthetic report fixtures; real counts recorded or BLOCKED.
 

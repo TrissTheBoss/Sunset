@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M0 IN PROGRESS**. Current task: T-005 done (next: [T-006](BACKLOG.md#t-006-inventory-via-data-generator)).
+Current milestone: **M0 IN PROGRESS**. Current task: T-006 done (next: [T-007](BACKLOG.md#t-007-environment-and-owner-baseline)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -8,7 +8,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 
 | Milestone | Status | Evidence |
 | --- | --- | --- |
-| M0 | IN PROGRESS | T-001..T-005 complete; reference 26.3 locked (protocol 777) |
+| M0 | IN PROGRESS | T-001..T-006 complete; inventory blocked on server jar |
 | M1 | NOT STARTED | — |
 | M2 | NOT STARTED | — |
 | M3 / VS-1 | NOT STARTED | — |
@@ -45,6 +45,18 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-11 · T-006 Inventory via data generator · IMPLEMENTED (real run BLOCKED)
+Change: Added `cargo xtask inventory`. Locates Java (system or Prism-bundled) and the server jar, runs the data generator's `--reports` into the private root with a timeout, parses registry report JSON, and writes counts. Parser unit-tested on synthetic registry fixtures. Real run BLOCKED: the 26.3 server jar is not installed.
+Files / commit: xtask/src/inventory.rs (new), xtask/src/main.rs, docs/tracking/PARITY.md (target lock recorded) (uncommitted).
+Commands and exit codes:
+  cargo test --package xtask → 0 (10 tests, incl. 2 inventory parser tests)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask inventory --non-interactive → 2 ("server jar not found … download the 26.3 server jar")
+  cargo xtask check --non-interactive → 0
+Artifacts (run IDs): none (real run blocked).
+Blockers: 26.3 server jar missing (owner action: download to ../sunset-private/). Data-generator invocation and domain mapping unverified until the server jar is present.
+Next smallest action: T-007 environment and owner baseline (blocked on bench-01 save + ~3,500 FPS settings).
 
 ### 2026-11-11 · T-005 Reference lock · IMPLEMENTED
 Change: Added `cargo xtask lock`. Hashes the local 26.3 client jar and asset index (SHA-256), reads protocol/pack/java from the client jar's version.json, and writes a private target-lock.json (private root) plus a committed target-lock.public.json (identifiers only). Server jar absent → null.
