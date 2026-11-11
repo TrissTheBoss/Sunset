@@ -7,14 +7,14 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 ## M0 Reference and reset
 
 ### T-001 Repository adoption check
-- Status: READY · REQ-16 · Depends: none
+- Status: IMPLEMENTED · REQ-16 · Depends: none
 - Scope: read-only Git inspection; write `docs/tracking/PROGRESS.md` entry only.
 - Do: record default branch, HEAD, local changes, open branches/tags; confirm the handbook tree is the active tree or record that the owner must perform [13](../13-GitHub-Wiki.md).
 - Accept: PROGRESS entry with the commands used. No Git writes.
 - Out of scope: merging, pushing, tagging.
 
 ### T-002 Workspace skeleton and toolchain pin
-- Status: READY · REQ-01, REQ-24 · Depends: T-001
+- Status: IMPLEMENTED · REQ-01, REQ-24 · Depends: T-001
 - Scope: `rust-toolchain.toml`, root `Cargo.toml` (workspace, `[workspace.lints]` with `unsafe_code = "forbid"`, release profile per PERF-A10), `.cargo/config.toml` alias `xtask = "run --package xtask --"`, `xtask/` crate with `clap` CLI and a `doctor` subcommand stub that returns exit 2 with "NOT IMPLEMENTED", `.gitignore` (`target/`, `runs/`, `private/`).
 - Accept: `cargo build` → 0; `cargo xtask doctor --non-interactive` → 2 with the message; `cargo clippy --all-targets -- -D warnings` → 0.
 - Out of scope: game crates.
