@@ -186,13 +186,15 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {
+    use std::fmt::Write;
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    let digest = hasher.finalize();
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest.iter() {
+        let _ = write!(output, "{byte:02x}");
+    }
+    output
 }
 
 fn timestamp() -> u64 {

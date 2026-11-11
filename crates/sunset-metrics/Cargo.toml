@@ -1,0 +1,10 @@
+[package]
+name = "sunset-metrics"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloc_counter = "0.0.4"

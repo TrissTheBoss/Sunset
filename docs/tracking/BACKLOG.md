@@ -51,7 +51,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 ## M1 Measurement before speed
 
 ### T-101 `sunset-metrics` crate
-- Status: NOT STARTED · REQ-03, REQ-04 · Depends: T-004
+- Status: IMPLEMENTED · REQ-03, REQ-04 · Depends: T-004
 - Do: fixed-capacity interval ring (no allocation after construction), throughput as frames/elapsed, exact percentile computation on a sorted copy outside the hot path, counters (draws, passes, submits, resource creations, uploads), and a counting global allocator with a per-thread frame scope.
 - Accept: property tests for percentiles against a naive reference; test that recording 1,000,000 intervals allocates 0 bytes.
 

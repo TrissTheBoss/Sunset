@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M0 IN PROGRESS** (T-001..T-007 implemented; exit blocked on owner actions). Current task: T-007 done (next: [T-101](BACKLOG.md#t-101-sunset-metrics-crate)).
+Current milestone: **M1 IN PROGRESS** (M0 code complete, exit blocked on owner actions). Current task: T-101 done (next: [T-102](BACKLOG.md#t-102-runner-core)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -9,7 +9,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | Milestone | Status | Evidence |
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
-| M1 | NOT STARTED | — |
+| M1 | IN PROGRESS | T-101 sunset-metrics crate complete |
 | M2 | NOT STARTED | — |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
@@ -32,6 +32,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | ra-ap-rustc_lexer | 0.184.0 | token-aware Rust comment detection | MIT OR Apache-2.0 | none | T-004 |
 | sha2 | 0.11.1 | SHA-256 hashing for reference lock | MIT OR Apache-2.0 | none | T-005 |
 | toml | 1.2.1 | bench scene manifest parsing | MIT OR Apache-2.0 | none | T-007 |
+| alloc_counter | 0.0.4 | counting global allocator (allocation scope measurement) | MIT OR Apache-2.0 | unsafe in dep (GlobalAlloc) | T-101 |
 
 ## Log
 
@@ -46,6 +47,17 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-11 · T-101 sunset-metrics crate · IMPLEMENTED
+Change: Created the sunset-metrics crate (safe Rust, no unsafe). IntervalRing (fixed-capacity, no allocation after construction), exact nearest-rank percentile on a sorted copy, frames-per-second throughput, per-frame counters (draws/passes/submits/resource creations/uploads), and the counting global allocator via the audited alloc_counter dependency (the GlobalAlloc unsafe lives in the dependency, per ADR-0001).
+Files / commit: crates/sunset-metrics/* (new), Cargo.toml (workspace member), Cargo.lock (uncommitted).
+Commands and exit codes:
+  cargo test -p sunset-metrics → 0 (6 tests: percentile property test, 1,000,000-interval 0-allocation test, ring/counter/throughput)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0 (workspace: fmt + clippy + lint + test)
+Artifacts (run IDs): none.
+Blockers: none.
+Next smallest action: T-102 runner core.
 
 ### 2026-11-11 · T-007 Environment and owner baseline · IMPLEMENTED (baseline BLOCKED)
 Change: Filled ENVIRONMENT.md "Owner benchmark machine" from the T-003 doctor output. Wrote bench/scenes/bench-01.toml per PRD 4.2 and bench/OWNER-INSTRUCTIONS.md (bench-01 save creation + baseline measurement). PERF-T3 marked BLOCKED (owner action: bench-01 save + ~3,500 FPS settings not provided).

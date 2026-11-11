@@ -125,18 +125,20 @@ fn lint_file(path: &Path, violations: &mut Vec<Violation>) {
 fn rust_comments(source: &str) -> Vec<Comment> {
     let mut comments = Vec::new();
     let mut offset = 0usize;
+    let mut line = 1usize;
     for token in tokenize(source, FrontmatterAllowed::No) {
         let len = token.len as usize;
+        let text = &source[offset..offset + len];
         if matches!(
             token.kind,
             TokenKind::LineComment { .. } | TokenKind::BlockComment { .. }
         ) {
-            let line = source[..offset].matches('\n').count() + 1;
             comments.push(Comment {
                 line,
-                text: source[offset..offset + len].to_string(),
+                text: text.to_string(),
             });
         }
+        line += text.matches('\n').count();
         offset += len;
     }
     comments
@@ -213,7 +215,7 @@ fn test_module_ranges(source: &str) -> Vec<(usize, usize)> {
                 j += 1;
             }
             if j < lines.len()
-                && lines[j].trim_start().starts_with("mod ")
+                && lines[j].trim_start().contains("mod ")
                 && lines[j].trim_end().ends_with('{')
             {
                 let mut depth = 0usize;

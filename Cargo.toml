@@ -1,5 +1,5 @@
 [workspace]
-members = ["xtask"]
+members = ["xtask", "crates/sunset-metrics"]
 resolver = "2"
 
 [workspace.package]
