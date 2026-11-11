@@ -34,7 +34,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Out of scope: CI configuration.
 
 ### T-005 Reference lock
-- Status: READY · REQ-12, REQ-02 · Depends: T-003
+- Status: IMPLEMENTED · REQ-12, REQ-02 · Depends: T-003
 - Do: locate the pinned target version in the local launcher directory (read-only), hash client/server jars and asset index, read protocol/pack versions from version metadata, write private `target-lock.json` and committed `target-lock.public.json` per [02](../02-Parity.md). Missing install → 2.
 - Accept: hashing tested on synthetic fixture files; a real run either produces the lock or a BLOCKED report; nothing proprietary is committed (`git status` review).
 

@@ -3,6 +3,7 @@
 mod check;
 mod doctor;
 mod lint;
+mod lock;
 
 use clap::{Parser, Subcommand};
 use std::path::Path;
@@ -28,6 +29,10 @@ enum Command {
         #[arg(long)]
         non_interactive: bool,
     },
+    Lock {
+        #[arg(long)]
+        non_interactive: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -35,6 +40,7 @@ fn main() -> ExitCode {
         Command::Doctor { non_interactive: _ } => doctor::run(),
         Command::Lint { non_interactive: _ } => lint::run_cli(),
         Command::Check { non_interactive: _ } => check::run(),
+        Command::Lock { non_interactive: _ } => lock::run(),
     }
 }
 

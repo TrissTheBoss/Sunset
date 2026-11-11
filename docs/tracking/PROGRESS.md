@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M0 IN PROGRESS**. Current task: T-004 done (next: [T-005](BACKLOG.md#t-005-reference-lock)).
+Current milestone: **M0 IN PROGRESS**. Current task: T-005 done (next: [T-006](BACKLOG.md#t-006-inventory-via-data-generator)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -8,7 +8,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 
 | Milestone | Status | Evidence |
 | --- | --- | --- |
-| M0 | IN PROGRESS | T-001..T-004 complete; doctor, lint and check tools working |
+| M0 | IN PROGRESS | T-001..T-005 complete; reference 26.3 locked (protocol 777) |
 | M1 | NOT STARTED | — |
 | M2 | NOT STARTED | — |
 | M3 / VS-1 | NOT STARTED | — |
@@ -30,6 +30,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | wgpu | 30.0.1 | GPU adapter enumeration | MIT OR Apache-2.0 | native GPU bindings (unsafe in deps) | T-003 |
 | pollster | 1.0.1 | block on wgpu async adapter enumeration | MIT OR Apache-2.0 | none | T-003 |
 | ra-ap-rustc_lexer | 0.184.0 | token-aware Rust comment detection | MIT OR Apache-2.0 | none | T-004 |
+| sha2 | 0.11.1 | SHA-256 hashing for reference lock | MIT OR Apache-2.0 | none | T-005 |
 
 ## Log
 
@@ -44,6 +45,18 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-11 · T-005 Reference lock · IMPLEMENTED
+Change: Added `cargo xtask lock`. Hashes the local 26.3 client jar and asset index (SHA-256), reads protocol/pack/java from the client jar's version.json, and writes a private target-lock.json (private root) plus a committed target-lock.public.json (identifiers only). Server jar absent → null.
+Files / commit: xtask/src/lock.rs (new), xtask/src/main.rs, xtask/Cargo.toml, Cargo.lock, target-lock.public.json (uncommitted).
+Commands and exit codes:
+  cargo test --package xtask → 0 (8 tests, incl. sha256 known value + version.json parse)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask lock --non-interactive → 0
+  cargo xtask check --non-interactive → 0
+Artifacts (run IDs): target-lock.public.json (committed) + ../sunset-private/target-lock.json (private).
+Blockers: none. server_jar_sha256 = null (server jar not installed); oracle_adapter_version = NONE.
+Next smallest action: T-006 inventory via data generator (needs Java).
 
 ### 2026-11-11 · T-004 Source lint and `xtask check` · IMPLEMENTED
 Change: Added `cargo xtask lint` and `cargo xtask check`. Lint does token-aware Rust comment detection (ra_ap_rustc_lexer) plus a hand-written WGSL lexer (line + nested block comments), exempts license headers and `#[cfg(test)]` modules/files, and checks `#![forbid(unsafe_code)]` in every crate root. `check` = fmt --check + clippy -D warnings + lint + unit tests.
