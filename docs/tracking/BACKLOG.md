@@ -20,14 +20,14 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Out of scope: game crates.
 
 ### T-003 Doctor and result schema v1
-- Status: READY · REQ-18, REQ-12 · Depends: T-002
+- Status: IMPLEMENTED · REQ-18, REQ-12 · Depends: T-002
 - Scope: `xtask` only.
 - Do: detect OS, CPU model/cores, RAM, Rust toolchain, GPU adapters/backends through `wgpu` adapter enumeration, release-profile settings (PERF-A10), private root presence (`SUNSET_PRIVATE_ROOT`, default `../sunset-private`), local launcher install (read-only). Write `runs/<run-id>/doctor.json` (schema version 1, fields per [07](../07-Automated-Testing.md)) and a Markdown summary. Exit 0 when all required checks pass, 2 when a prerequisite is missing, 1 when a check fails.
 - Accept: unit tests for exit-code mapping and schema serialization; doctor on a machine without the game install → 2 with an actionable message; results are reproducible apart from timestamps.
 - Out of scope: reference hashing (T-005).
 
 ### T-004 Source lint and `xtask check`
-- Status: READY · REQ-17, REQ-01 · Depends: T-002
+- Status: IMPLEMENTED · REQ-17, REQ-01 · Depends: T-002
 - Scope: `xtask lint`, `xtask check`.
 - Do: token-aware comment detection for Rust (a lexer crate such as `ra_ap_rustc_lexer`, verified) and a small hand-written WGSL lexer (line comments, nested block comments, strings do not exist in WGSL). Exempt test modules/files and license headers per AGENTS.md. Check that `#![forbid(unsafe_code)]` is effective in every first-party crate. `check` = fmt check + clippy `-D warnings` + lint + unit tests.
 - Accept: fault fixtures (comment in a Rust string must pass, real comment must fail, nested WGSL block comment must fail, license header must pass); `cargo xtask check --non-interactive` → 0 on the clean tree, → 1 on an injected comment.
