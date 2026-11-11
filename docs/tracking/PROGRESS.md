@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M1 IN PROGRESS** (M0 code complete, exit blocked on owner actions). Current task: T-101 done (next: [T-102](BACKLOG.md#t-102-runner-core)).
+Current milestone: **M1 IN PROGRESS** (M0 code complete, exit blocked on owner actions). Current task: T-102 done (next: [T-103](BACKLOG.md#t-103-bench-harness)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -9,7 +9,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | Milestone | Status | Evidence |
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
-| M1 | IN PROGRESS | T-101 sunset-metrics crate complete |
+| M1 | IN PROGRESS | T-101, T-102 complete (metrics + runner core) |
 | M2 | NOT STARTED | — |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
@@ -33,6 +33,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | sha2 | 0.11.1 | SHA-256 hashing for reference lock | MIT OR Apache-2.0 | none | T-005 |
 | toml | 1.2.1 | bench scene manifest parsing | MIT OR Apache-2.0 | none | T-007 |
 | alloc_counter | 0.0.4 | counting global allocator (allocation scope measurement) | MIT OR Apache-2.0 | unsafe in dep (GlobalAlloc) | T-101 |
+| command-group | 5.0.1 | process-group spawn/kill for the runner | Apache-2.0 OR MIT | unsafe in dep (nix) | T-102 |
 
 ## Log
 
@@ -47,6 +48,18 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-11 · T-102 Runner core · IMPLEMENTED
+Change: Added the xtask runner core. run_child spawns a child in a process group (command-group), waits with a timeout, kills the whole group on timeout, and classifies outcomes. Exit codes: 0 pass, 1 assertion, 2 missing prerequisite, 3 crash, 4 timeout. Writes runs/<run-id>/report.json + report.md; `cargo xtask run --id --timeout-ms --program [--arg...]` records a run and `cargo xtask report --run <id>` prints it.
+Files / commit: xtask/src/runner.rs (new), xtask/src/main.rs (run + report subcommands), xtask/Cargo.toml + Cargo.lock (command-group) (uncommitted).
+Commands and exit codes:
+  cargo test -p xtask → 0 (16 tests, incl. 5 runner fault tests: hanging→4, crashing→3, missing→2, no-orphan, exit-code mapping)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0
+  cargo xtask run --id demo --timeout-ms 5000 --program true → 0; cargo xtask report --run demo → 0
+Artifacts (run IDs): runs/demo/report.json + report.md.
+Blockers: none. JUnit output deferred to T-104.
+Next smallest action: T-103 bench harness.
 
 ### 2026-11-11 · T-101 sunset-metrics crate · IMPLEMENTED
 Change: Created the sunset-metrics crate (safe Rust, no unsafe). IntervalRing (fixed-capacity, no allocation after construction), exact nearest-rank percentile on a sorted copy, frames-per-second throughput, per-frame counters (draws/passes/submits/resource creations/uploads), and the counting global allocator via the audited alloc_counter dependency (the GlobalAlloc unsafe lives in the dependency, per ADR-0001).

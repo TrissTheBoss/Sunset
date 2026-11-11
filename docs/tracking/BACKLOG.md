@@ -56,7 +56,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: property tests for percentiles against a naive reference; test that recording 1,000,000 intervals allocates 0 bytes.
 
 ### T-102 Runner core
-- Status: NOT STARTED · REQ-18 · Depends: T-003
+- Status: IMPLEMENTED · REQ-18 · Depends: T-003
 - Do: child processes with argument arrays, timeouts, process-group cleanup, immutable `runs/<run-id>/`, JSON/JUnit/Markdown output, `cargo xtask report --run`.
 - Accept: fault tests: hanging child → 4, crashing child → 3, missing prerequisite → 2; no orphan processes after each.
 

@@ -5,6 +5,7 @@ mod doctor;
 mod inventory;
 mod lint;
 mod lock;
+mod runner;
 
 use clap::{Parser, Subcommand};
 use std::path::Path;
@@ -38,6 +39,20 @@ enum Command {
         #[arg(long)]
         non_interactive: bool,
     },
+    Report {
+        #[arg(long)]
+        run: String,
+    },
+    Run {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        timeout_ms: u64,
+        #[arg(long)]
+        program: String,
+        #[arg(long)]
+        arg: Vec<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -47,6 +62,13 @@ fn main() -> ExitCode {
         Command::Check { non_interactive: _ } => check::run(),
         Command::Lock { non_interactive: _ } => lock::run(),
         Command::Inventory { non_interactive: _ } => inventory::run(),
+        Command::Report { run } => runner::report(&run),
+        Command::Run {
+            id,
+            timeout_ms,
+            program,
+            arg,
+        } => runner::run_cli(&id, timeout_ms, &program, &arg),
     }
 }
 
