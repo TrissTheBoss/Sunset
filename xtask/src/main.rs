@@ -55,3 +55,13 @@ pub(crate) fn workspace_root() -> &'static Path {
         .parent()
         .unwrap_or_else(|| Path::new("."))
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn bench_01_manifest_parses() {
+        let path = crate::workspace_root().join("bench/scenes/bench-01.toml");
+        let text = std::fs::read_to_string(path).expect("read bench-01.toml");
+        let _: toml::Value = toml::from_str(&text).expect("valid TOML");
+    }
+}

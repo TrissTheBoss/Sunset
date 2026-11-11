@@ -6,16 +6,16 @@ Filled by `cargo xtask doctor` (T-003) and T-007. Unknown values are written as 
 
 | Field | Value |
 | --- | --- |
-| OS and version | UNKNOWN |
-| CPU model / cores / threads | UNKNOWN |
-| RAM | UNKNOWN |
-| GPU / VRAM | UNKNOWN |
-| Driver version | UNKNOWN |
-| wgpu backend used | UNKNOWN |
+| OS and version | Ubuntu 26.04.1 LTS |
+| CPU model / cores / threads | AMD Ryzen 5 5600X 6-Core Processor (6 cores / 12 threads) |
+| RAM | 16 GB (16123367424 bytes) |
+| GPU / VRAM | AMD Radeon RX 6800 XT; VRAM UNKNOWN |
+| Driver version | Mesa radv (Vulkan) / radeonsi (GL) |
+| wgpu backend used | Vulkan |
 | Present modes offered | UNKNOWN |
 | Display resolution / refresh | UNKNOWN |
 | Power plan | UNKNOWN |
-| Rust toolchain | UNKNOWN |
+| Rust toolchain | 1.99.1 |
 
 ## Owner baseline (~3,500 FPS report)
 

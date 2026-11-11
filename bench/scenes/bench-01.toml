@@ -1,0 +1,48 @@
+[scene]
+name = "bench-01"
+save = "bench-01"
+seed = "sunset"
+world_type = "default"
+radius_chunks = 16
+
+[window]
+width = 1920
+height = 1080
+borderless = true
+render_scale = 1.0
+gui_scale = 2
+hotbar = true
+crosshair = true
+debug_overlay = false
+
+[present]
+mode = "Immediate"
+fallback = "Mailbox"
+vsync = false
+frame_cap = 0
+
+[gamerules]
+do_daylight_cycle = false
+time_of_day = 6000
+do_weather_cycle = false
+weather = "clear"
+do_mob_spawning = false
+
+[settings]
+render_distance = 8
+simulation_distance = 8
+fov = 70
+
+[camera]
+mode = "spectator"
+eye_height = 1.62
+headings = ["N", "E", "S", "W"]
+heading_duration_s = 15
+yaw_sweep_duration_s = 60
+yaw_sweep_degrees = 360
+
+[timing]
+warmup_s = 60
+sampling_s = 120
+runs = 5
+alternate_baseline = true

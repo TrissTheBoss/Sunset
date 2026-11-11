@@ -44,7 +44,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: parser tests on small synthetic report fixtures; real counts recorded or BLOCKED.
 
 ### T-007 Environment and owner baseline
-- Status: READY · REQ-03 · Depends: T-003
+- Status: IMPLEMENTED · REQ-03 · Depends: T-003
 - Do: fill [ENVIRONMENT](ENVIRONMENT.md) from the doctor output. Write `bench/scenes/bench-01.toml` per PRD 4.2. Produce owner instructions for creating the `bench-01` save in vanilla and for measuring the baseline client on it; record results when the owner provides them, else mark PERF-T3 BLOCKED (owner action).
 - Accept: manifest parses (test); ENVIRONMENT has no silent blanks (unknown = `UNKNOWN`).
 

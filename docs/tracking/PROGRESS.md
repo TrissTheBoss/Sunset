@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M0 IN PROGRESS**. Current task: T-006 done (next: [T-007](BACKLOG.md#t-007-environment-and-owner-baseline)).
+Current milestone: **M0 IN PROGRESS** (T-001..T-007 implemented; exit blocked on owner actions). Current task: T-007 done (next: [T-101](BACKLOG.md#t-101-sunset-metrics-crate)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -8,7 +8,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 
 | Milestone | Status | Evidence |
 | --- | --- | --- |
-| M0 | IN PROGRESS | T-001..T-006 complete; inventory blocked on server jar |
+| M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
 | M1 | NOT STARTED | — |
 | M2 | NOT STARTED | — |
 | M3 / VS-1 | NOT STARTED | — |
@@ -31,6 +31,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | pollster | 1.0.1 | block on wgpu async adapter enumeration | MIT OR Apache-2.0 | none | T-003 |
 | ra-ap-rustc_lexer | 0.184.0 | token-aware Rust comment detection | MIT OR Apache-2.0 | none | T-004 |
 | sha2 | 0.11.1 | SHA-256 hashing for reference lock | MIT OR Apache-2.0 | none | T-005 |
+| toml | 1.2.1 | bench scene manifest parsing | MIT OR Apache-2.0 | none | T-007 |
 
 ## Log
 
@@ -45,6 +46,17 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-11 · T-007 Environment and owner baseline · IMPLEMENTED (baseline BLOCKED)
+Change: Filled ENVIRONMENT.md "Owner benchmark machine" from the T-003 doctor output. Wrote bench/scenes/bench-01.toml per PRD 4.2 and bench/OWNER-INSTRUCTIONS.md (bench-01 save creation + baseline measurement). PERF-T3 marked BLOCKED (owner action: bench-01 save + ~3,500 FPS settings not provided).
+Files / commit: docs/tracking/ENVIRONMENT.md, bench/scenes/bench-01.toml (new), bench/OWNER-INSTRUCTIONS.md (new), xtask/src/main.rs (manifest parse test), xtask/Cargo.toml + Cargo.lock (toml dep) (uncommitted).
+Commands and exit codes:
+  cargo test --package xtask → 0 (11 tests, incl. bench-01 manifest parse)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0
+Artifacts (run IDs): none.
+Blockers: PERF-T3 (owner baseline) — needs bench-01 save + original ~3,500 FPS settings. T-006 real inventory — needs server jar.
+Next smallest action: T-101 sunset-metrics crate (M1, depends on T-004).
 
 ### 2026-11-11 · T-006 Inventory via data generator · IMPLEMENTED (real run BLOCKED)
 Change: Added `cargo xtask inventory`. Locates Java (system or Prism-bundled) and the server jar, runs the data generator's `--reports` into the private root with a timeout, parses registry report JSON, and writes counts. Parser unit-tested on synthetic registry fixtures. Real run BLOCKED: the 26.3 server jar is not installed.
