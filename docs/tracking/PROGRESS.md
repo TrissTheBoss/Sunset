@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M1 IN PROGRESS** (M0 code complete, exit blocked on owner actions). Current task: T-104 done (next: [M2 T-201](BACKLOG.md#t-201-device-window-and-frame-loop)).
+Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-201 done (next: [T-202](BACKLOG.md#t-202-gpu-timing-ring)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -9,8 +9,8 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | Milestone | Status | Evidence |
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
-| M1 | IN PROGRESS | T-101..T-104 complete (metrics + runner core + bench harness + harness self-tests) |
-| M2 | NOT STARTED | — |
+| M1 | COMPLETE | T-101..T-104 complete (metrics + runner core + bench harness + harness self-tests) |
+| M2 | IN PROGRESS | T-201 complete (device, window, frame loop) |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
 
@@ -18,7 +18,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 
 | Date | Commit | Scene | Median FPS | p99 / p99.9 (ms) | Result | Run ID |
 | --- | --- | --- | --- | --- | --- | --- |
-| — | — | — | — | — | No measurements yet | — |
+| 2026-11-12 | — | BENCH-00 | ~2,480 | — | BLOCKED (Mailbox, no Immediate on Wayland) | ad hoc |
 
 ## Dependency ledger
 
@@ -34,6 +34,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | toml | 1.2.1 | bench scene manifest parsing | MIT OR Apache-2.0 | none | T-007 |
 | alloc_counter | 0.0.4 | counting global allocator (allocation scope measurement) | MIT OR Apache-2.0 | unsafe in dep (GlobalAlloc) | T-101 |
 | command-group | 5.0.1 | process-group spawn/kill for the runner | Apache-2.0 OR MIT | unsafe in dep (nix) | T-102 |
+| winit | 0.30.13 | client window and event loop | MIT OR Apache-2.0 | X11/Wayland via dlopen (unsafe in deps) | T-201 |
 
 ## Log
 
@@ -48,6 +49,20 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-12 · T-201 Device, window and frame loop · IMPLEMENTED
+Change: Created `sunset-render` (library) and `sunset-client` (binary). sunset-render owns the wgpu instance/adapter/device/surface/queue, present-mode selection (Immediate → Mailbox → Fifo via a tested pure function), surface configure/resize, a one-submit-per-frame clear pass, and the effective present-mode label. sunset-client creates a winit window, runs a continuous-redraw event loop (ControlFlow::Poll + request_redraw, PERF-A14), records frame intervals into a preallocated IntervalRing, handles resize and Outdated/Suboptimal/Lost reconfigure (device-loss recovery), and emits metrics JSON (schema 1: frames/elapsed_s/present_mode/intervals_ms) when launched with a scene manifest path. Validation on in debug / off in release via InstanceFlags (PERF-A11); desired_maximum_frame_latency = 2 (2-slot frame ring, PERF-A04).
+Files / commit: crates/sunset-render/*, crates/sunset-client/*, bench/scenes/bench-00.toml, Cargo.toml (members), Cargo.lock (winit 0.30.13 + wayland/x11 stack) (uncommitted).
+Commands and exit codes:
+  cargo build -p sunset-render → 0
+  cargo build -p sunset-client → 0
+  cargo test -p sunset-render → 0 (4 present-mode tests)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0
+  target/debug/sunset-client bench/scenes/bench-00.toml 0 → 0 (emitted metrics JSON)
+Artifacts (run IDs): BENCH-00 ad hoc run — ~2,480 FPS (12,480 frames / 5 s), present mode Mailbox.
+Blockers: BENCH-00 > 20,000 FPS gate not met on this machine because the Wayland/XWayland compositor offers no Immediate present mode (Mailbox caps throughput); per 09-Benchmarks.md this needs a native X11 session or a tearing-capable Wayland compositor. PERF-A01 "0 allocations/frame" not yet verified: wgpu's per-frame command-encoder allocation is a known open item for the M2 gate (T-212).
+Next smallest action: T-202 GPU timing ring.
 
 ### 2026-11-11 · T-103 Bench harness · IMPLEMENTED
 Change: Added `cargo xtask bench --suite <id> [--gate] [--program <path>]`. Reads bench/scenes/<id>.toml (scene name + timing runs/warmup/sampling), launches the client as `<program> <manifest-path> <run-index>`, captures stdout/stderr (new runner::run_captured with piped stdio + process-group timeout), parses the metrics JSON (schema 1: frames/elapsed_s/present_mode/intervals_ms), computes throughput = frames/elapsed and p99/p99.9 via sunset_metrics::percentile, applies PERF-T1/PERF-T2 from [09](09-Benchmarks.md), flags Fifo present mode, and flags run-to-run CV > 3% as INCONCLUSIVE. Writes runs/<run-id>/bench.json + bench.md. Exit 0 pass / 1 fail or inconclusive / 2 blocked / 3 crash / 4 timeout.

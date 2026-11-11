@@ -1,0 +1,7 @@
+[scene]
+name = "bench-00"
+
+[timing]
+warmup_s = 2
+sampling_s = 5
+runs = 1

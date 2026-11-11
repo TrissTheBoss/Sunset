@@ -73,7 +73,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 ## M2 Renderer core
 
 ### T-201 Device, window and frame loop
-- Status: NOT STARTED · REQ-03 · Depends: T-101
+- Status: IMPLEMENTED · REQ-03 · Depends: T-101
 - Crates: `sunset-render`, `sunset-client` (binary).
 - Do: winit window, wgpu instance/adapter/device with validation on in debug and off in release (PERF-A11), present-mode selection Immediate → Mailbox → Fifo with the effective mode logged once, continuous redraw (PERF-A14), resize/minimize, device-loss recovery, 2-slot frame ring (PERF-A04), one submit per frame, HUD clear pass. Emits metrics JSON when launched by the harness.
 - Accept: BENCH-00 > 20,000 FPS on the owner machine (or recorded value plus analysis); 0 allocations per frame; 0 resource creations per frame after warm-up.
