@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-204 done (next: [T-205](BACKLOG.md#t-205-reference-mesher-and-packed-vertex-format)).
+Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-205 done (next: [T-206](BACKLOG.md#t-206-greedy-mesher-with-equivalence-proof)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -10,7 +10,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
 | M1 | COMPLETE | T-101..T-104 complete (metrics + runner core + bench harness + harness self-tests) |
-| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S) complete |
+| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S), T-205 (reference mesher + packed vertex) complete |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
 
@@ -49,6 +49,17 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-13 · T-205 reference mesher and packed vertex format · IMPLEMENTED
+Change: Added a culled-face CPU reference mesher for full cubes and fixed the M2 vertex layout. `sunset-core::mesh` defines `Face` (Down/Up/North/South/West/East), a packed 8-byte `Vertex` (pos 3×5 bits, face 3 bits, ao 2 bits, light 4 bits, uv_index 16 bits, tint_index 8 bits, 16 reserved bits), `Mesh`, `SectionNeighbors`, and `mesh_section`, which emits only faces facing air and resolves faces across section borders via the six neighbor sections (missing neighbor = air). Extracted the synthetic block IDs into `sunset-core::block` so terrain and mesh share them. Amended ADR-0005 with the quantization table.
+Files / commit: crates/sunset-core/src/mesh.rs (new), crates/sunset-core/src/block.rs (new), crates/sunset-core/src/terrain.rs (block module extracted), crates/sunset-core/src/lib.rs (modules + re-exports), docs/decisions/ADR-0005-gpu-submission.md (layout amendment).
+Commands and exit codes:
+  cargo test -p sunset-core → 0 (26 tests; new mesh tests: vertex size/quantization round-trip, single block 6 outward faces, slab shared-face culling, water full-cube, 6-direction border culling, missing-neighbor-as-air)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0 (fmt/clippy/lint + 67 unit tests)
+Artifacts (run IDs): none.
+Blockers: none.
+Next smallest action: T-206 greedy mesher with equivalence proof.
 
 ### 2026-11-13 · T-204 synthetic terrain and BENCH-01S · IMPLEMENTED
 Change: Added `sunset-core` terrain generation. `TerrainGenerator` produces deterministic synthetic terrain from a seed using original value noise (2D for height, 3D for caves), deterministic hash-based tree placement (log/leaves cutout), water fill below sea level, and a block palette (AIR/STONE/DIRT/GRASS/SAND/WATER/LEAVES/LOG/SNOW). Wrote `bench/scenes/bench-01s.toml` documenting the calibration (seed/height/sea-level/cave/foliage/snow params matching `TerrainParams::default()`).

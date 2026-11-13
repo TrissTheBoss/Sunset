@@ -94,7 +94,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: generation is seed-deterministic (hash test).
 
 ### T-205 Reference mesher and packed vertex format
-- Status: NOT STARTED · REQ-06 · Depends: T-203
+- Status: IMPLEMENTED · REQ-06 · Depends: T-203
 - Do: culled-face CPU mesher for full cubes with neighbor-section awareness; vertex layout ≤ 16 bytes (ADR-0005 amendment with layout table).
 - Accept: unit tests on hand-built sections (single block, slab of blocks, section borders).
 

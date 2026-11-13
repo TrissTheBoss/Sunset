@@ -1,0 +1,9 @@
+pub const AIR: u16 = 0;
+pub const STONE: u16 = 1;
+pub const DIRT: u16 = 2;
+pub const GRASS: u16 = 3;
+pub const SAND: u16 = 4;
+pub const WATER: u16 = 5;
+pub const LEAVES: u16 = 6;
+pub const LOG: u16 = 7;
+pub const SNOW: u16 = 8;
