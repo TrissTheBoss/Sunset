@@ -84,7 +84,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: on/off paired run shows ≤ 2% overhead; graceful absence when timestamps are unsupported.
 
 ### T-203 `sunset-core` basics
-- Status: NOT STARTED · REQ-02 · Depends: T-004
+- Status: IMPLEMENTED · REQ-02 · Depends: T-004
 - Do: block/section/chunk coordinates with vanilla floor-division semantics for negatives, dense block-state handles, paletted section container with the target's bits-per-entry rules, Java-semantics integer helpers.
 - Accept: property tests for round trips; vectors for negative coordinates and extreme integers.
 

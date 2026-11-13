@@ -1847,6 +1847,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "sunset-core"
+version = "0.1.0"
+
+[[package]]
 name = "sunset-metrics"
 version = "0.1.0"
 dependencies = [

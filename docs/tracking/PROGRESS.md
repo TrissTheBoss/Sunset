@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-202 done (next: [T-203](BACKLOG.md#t-203-sunset-core-basics)).
+Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-203 done (next: [T-204](BACKLOG.md#t-204-synthetic-terrain-and-bench-01s)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -10,7 +10,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
 | M1 | COMPLETE | T-101..T-104 complete (metrics + runner core + bench harness + harness self-tests) |
-| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace) complete |
+| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics) complete |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
 
@@ -49,6 +49,17 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-12 · T-203 sunset-core basics · IMPLEMENTED
+Change: Created the `sunset-core` crate (no dependencies). Added Java-semantics integer helpers (`floor_div`/`floor_mod` matching Java's Math.floorDiv/floorMod, including the i32::MIN ÷ -1 edge case), block/section/chunk coordinate types (`BlockPos`/`SectionPos`/`ChunkPos` with `>> 4`/`& 15` floor-division/local decomposition and YZX section index), a dense `BlockState(u16)` handle, and a `PalettedSection` with the target's bits-per-entry rules (4-bit indirect ≤16, 8-bit indirect ≤256, 16-bit direct, with palette growth/rebuild).
+Files / commit: crates/sunset-core/* (new), Cargo.toml (member), Cargo.lock (uncommitted).
+Commands and exit codes:
+  cargo test -p sunset-core → 0 (16 tests: floor-div/mod vectors incl. extremes, coordinate round-trips, palette round-trips + bits growth at 16/256 thresholds + random-state property test)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0
+Artifacts (run IDs): none.
+Blockers: none.
+Next smallest action: T-204 synthetic terrain and BENCH-01S.
 
 ### 2026-11-12 · T-202 GPU timing ring · IMPLEMENTED
 Change: Added GPU timestamp queries and per-line CPU tracing to sunset-render. `GpuTimer` writes begin/end timestamps per render pass when `TIMESTAMP_QUERY` is supported (graceful absence otherwise), resolves them into a 3-slot ring (query set → resolve buffer → readback buffer) each frame, and reads the latest frame's duration back at shutdown (blocking, outside the frame loop). `CpuTrace` records per-frame accumulated microseconds for the PRD 4.3 budget lines (InputEvents, SnapshotAcquire, SectionVisibility, EntitiesPrepare, HudBuild, UploadSchedule, CommandEncode, AcquirePresent); the clear pass instruments CommandEncode + AcquirePresent. The client emits `gpu_pass_ms` and the two active CPU spans in the metrics JSON and toggles timing via `SUNSET_GPU_TIMING=0`.
