@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-211 done (next: [T-212](BACKLOG.md#t-212-m2-performance-gate)).
+Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-212 blocked (next: [T-212a](BACKLOG.md#t-212a-assemble-the-bench-01s-terrain-render-path)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -10,7 +10,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
 | M1 | COMPLETE | T-101..T-104 complete (metrics + runner core + bench harness + harness self-tests) |
-| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S), T-205 (reference mesher + packed vertex), T-206 (greedy mesher + equivalence proof), T-207 (geometry arena + staging ring), T-208 (culling + indirect draws), T-209 (terrain shading), T-210 (job system), T-211 (HUD batch + synthetic font) complete |
+| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S), T-205 (reference mesher + packed vertex), T-206 (greedy mesher + equivalence proof), T-207 (geometry arena + staging ring), T-208 (culling + indirect draws), T-209 (terrain shading), T-210 (job system), T-211 (HUD batch + synthetic font) complete; T-212 gate BLOCKED on terrain render-path assembly (T-212a) + native X11 |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
 
@@ -18,6 +18,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 
 | Date | Commit | Scene | Median FPS | p99 / p99.9 (ms) | Result | Run ID |
 | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-13 | fe1cf53 | BENCH-00 (clear pass only) | 6,615 | 0.33 / 0.42 | recorded; Wayland present-capped; client does not render terrain yet | 1794591105 |
 | 2026-11-12 | — | BENCH-00 | ~8,460 (release, Immediate) | — | recorded; Wayland present-capped, needs native X11 | ad hoc |
 
 ## Dependency ledger
@@ -49,6 +50,16 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-13 · T-212 M2 performance gate · BLOCKED
+Change: Assessed the M2 gate. Built `target/release/sunset-client` and ran `cargo xtask bench --suite bench-00`; the client still renders a clear pass only (no terrain), so BENCH-01S cannot be run meaningfully. Added `T-212a` (assemble the terrain render path) to the backlog as the missing prerequisite.
+Files / commit: none (tracking only).
+Commands and exit codes:
+  cargo build -p sunset-client --release → 0
+  cargo xtask bench --suite bench-00 → 0 (verdict pass, gate=false; clear-pass throughput 6,615 FPS, p99 0.33 ms, p99.9 0.42 ms, present mode Immediate)
+Artifacts (run IDs): 1794591105 (bench-00, clear-pass only).
+Blockers: (1) terrain render path not assembled (client is still the T-201 clear pass); (2) ≥4,000 FPS gate needs native X11/Windows — Wayland/Sway present-cap limits even the clear pass to ~6.6k FPS.
+Next smallest action: T-212a assemble the BENCH-01S terrain render path.
 
 ### 2026-11-13 · T-211 HUD batch and synthetic font · IMPLEMENTED
 Change: Added the HUD batching layer and a synthetic 5×7 bitmap font. `sunset-render::font` provides `glyph_rows` with original bitmaps for 0-9, A-Z, space and `.`/`:`/`-` plus width/height/advance constants (unsupported chars → None). `sunset-render::hud` provides `HudVertex`, `HudMaterial` (Solid/Text), and `HudBatch`: fixed-capacity `Box<[...]>` vertex/index buffers per material (allocated once at `new`, the per-frame path is pure indexed writes), `clear` (no dealloc), `push_rect`/`push_text`, and `draw_count` (one draw per non-empty material class).

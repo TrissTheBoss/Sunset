@@ -128,8 +128,14 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Status: IMPLEMENTED · REQ-19 · Depends: T-201
 - Accept: one draw per material class; 0 allocations per frame with changing text.
 
+### T-212a Assemble the BENCH-01S terrain render path
+- Status: NOT STARTED · REQ-03 · Depends: T-204..T-211
+- Do: wire terrain generation → greedy meshing → geometry-arena upload (bounded by PERF-A07) → frustum culling → contiguous indirect-draw list → terrain pipeline (T-209 WGSL) → single submit, driven by the job system. Split further if it exceeds one reviewable diff.
+- Accept: `cargo xtask bench --suite bench-01s` runs and renders synthetic terrain; terrain draw count ≤ 64; direct vs indirect toggle equivalence.
+
 ### T-212 M2 performance gate
-- Status: NOT STARTED · REQ-03 · Depends: T-202, T-206, T-208, T-209, T-210, T-211
+- Status: BLOCKED · REQ-03 · Depends: T-202, T-206, T-208, T-209, T-210, T-211, T-212a
+- Blockers: (1) the terrain render path is not yet assembled (the client still renders a clear pass only; see T-212a); (2) the ≥4,000 FPS gate needs native X11/Windows — Wayland/Sway present-cap measured 6,615 FPS on the clear-pass BENCH-00 (release, Immediate).
 - Do: run BENCH-01S full; fill the budget table measurements; profile and fix until the gate passes or an ADR documents the bottleneck.
 - Accept: `cargo xtask bench --suite bench-01s --gate` → 0 at ≥ 4,000 FPS; PERF-A01–A15 counters green.
 
