@@ -43,6 +43,62 @@ impl Face {
     ];
 }
 
+#[derive(Clone, Copy)]
+struct FaceAxes {
+    normal: usize,
+    u: usize,
+    v: usize,
+    positive: bool,
+}
+
+const FACE_AXES: [FaceAxes; 6] = [
+    FaceAxes {
+        normal: 1,
+        u: 0,
+        v: 2,
+        positive: false,
+    },
+    FaceAxes {
+        normal: 1,
+        u: 0,
+        v: 2,
+        positive: true,
+    },
+    FaceAxes {
+        normal: 2,
+        u: 0,
+        v: 1,
+        positive: false,
+    },
+    FaceAxes {
+        normal: 2,
+        u: 0,
+        v: 1,
+        positive: true,
+    },
+    FaceAxes {
+        normal: 0,
+        u: 1,
+        v: 2,
+        positive: false,
+    },
+    FaceAxes {
+        normal: 0,
+        u: 1,
+        v: 2,
+        positive: true,
+    },
+];
+
+#[derive(Clone, Copy)]
+struct Quad {
+    n: u8,
+    u0: u8,
+    v0: u8,
+    u_len: u8,
+    v_len: u8,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Vertex(u64);
 
@@ -221,22 +277,127 @@ fn face_neighbor(
     }
 }
 
-fn emit_face(mesh: &mut Mesh, x: u8, y: u8, z: u8, face: Face, uv_index: u16) {
+pub fn mesh_section_greedy(section: &PalettedSection, neighbors: &SectionNeighbors) -> Mesh {
+    let mut mesh = Mesh::default();
+    for &face in &Face::ALL {
+        greedy_axis(&mut mesh, section, neighbors, face);
+    }
+    mesh
+}
+
+fn greedy_axis(
+    mesh: &mut Mesh,
+    section: &PalettedSection,
+    neighbors: &SectionNeighbors,
+    face: Face,
+) {
+    let axes = FACE_AXES[face as usize];
+    for n in 0..16u8 {
+        let mut mask: [[Option<u16>; 16]; 16] = [[None; 16]; 16];
+        for u in 0..16u8 {
+            for v in 0..16u8 {
+                let pos = pos_from(axes, n, u, v);
+                let state = section.get(index(pos[1], pos[2], pos[0]));
+                if state == AIR {
+                    continue;
+                }
+                if face_neighbor(section, neighbors, face, pos[0], pos[1], pos[2]) == AIR {
+                    mask[u as usize][v as usize] = Some(state);
+                }
+            }
+        }
+        let mut consumed = [[false; 16]; 16];
+        for u in 0..16usize {
+            for v in 0..16usize {
+                let Some(state) = mask[u][v] else {
+                    continue;
+                };
+                if consumed[u][v] {
+                    continue;
+                }
+                let mut v_len = 1;
+                while v + v_len < 16 && mask[u][v + v_len] == Some(state) && !consumed[u][v + v_len]
+                {
+                    v_len += 1;
+                }
+                let mut u_len = 1;
+                'extend: while u + u_len < 16 {
+                    for dv in 0..v_len {
+                        if mask[u + u_len][v + dv] != Some(state) || consumed[u + u_len][v + dv] {
+                            break 'extend;
+                        }
+                    }
+                    u_len += 1;
+                }
+                for du in 0..u_len {
+                    for dv in 0..v_len {
+                        consumed[u + du][v + dv] = true;
+                    }
+                }
+                emit_quad(
+                    mesh,
+                    face,
+                    Quad {
+                        n,
+                        u0: u as u8,
+                        v0: v as u8,
+                        u_len: u_len as u8,
+                        v_len: v_len as u8,
+                    },
+                    state,
+                );
+            }
+        }
+    }
+}
+
+fn pos_from(axes: FaceAxes, n: u8, u: u8, v: u8) -> [u8; 3] {
+    let mut pos = [0u8; 3];
+    pos[axes.normal] = n;
+    pos[axes.u] = u;
+    pos[axes.v] = v;
+    pos
+}
+
+fn emit_quad(mesh: &mut Mesh, face: Face, quad: Quad, uv_index: u16) {
+    let axes = FACE_AXES[face as usize];
     let corners = FACE_CORNERS[face as usize];
     let base = mesh.vertices.len() as u32;
-    for corner in corners {
-        let vertex = Vertex::new(
-            [x + corner[0], y + corner[1], z + corner[2]],
-            face,
-            0,
-            15,
-            uv_index,
-            0,
-        );
-        mesh.vertices.push(vertex);
+    for offset in corners {
+        let mut corner = [0u8; 3];
+        corner[axes.normal] = if axes.positive { quad.n + 1 } else { quad.n };
+        corner[axes.u] = if offset[axes.u] == 0 {
+            quad.u0
+        } else {
+            quad.u0 + quad.u_len
+        };
+        corner[axes.v] = if offset[axes.v] == 0 {
+            quad.v0
+        } else {
+            quad.v0 + quad.v_len
+        };
+        mesh.vertices
+            .push(Vertex::new(corner, face, 0, 15, uv_index, 0));
     }
     mesh.indices
         .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+}
+
+fn emit_face(mesh: &mut Mesh, x: u8, y: u8, z: u8, face: Face, uv_index: u16) {
+    let axes = FACE_AXES[face as usize];
+    let pos = [x, y, z];
+    emit_quad(
+        mesh,
+        face,
+        Quad {
+            n: pos[axes.normal],
+            u0: pos[axes.u],
+            v0: pos[axes.v],
+            u_len: 1,
+            v_len: 1,
+        },
+        uv_index,
+    );
 }
 
 fn index(y: u8, z: u8, x: u8) -> usize {
@@ -247,6 +408,9 @@ fn index(y: u8, z: u8, x: u8) -> usize {
 mod tests {
     use super::*;
     use crate::block::{STONE, WATER};
+    use crate::palette::SECTION_SIZE;
+    use crate::terrain::{TerrainGenerator, TerrainParams};
+    use std::collections::BTreeSet;
 
     #[test]
     fn vertex_size_is_within_budget() {
@@ -359,6 +523,161 @@ mod tests {
         center.set(index(0, 0, 15), STONE);
         let mesh = mesh_section(&center, &SectionNeighbors::default());
         assert_eq!(mesh.vertices.len(), 24);
+    }
+
+    #[test]
+    fn greedy_matches_reference_and_oracle_over_random_sections() {
+        let mut state = 0x9e3779b97f4a7c15u64;
+        for _ in 0..48 {
+            let section = random_section(&mut state);
+            let down = random_section(&mut state);
+            let up = random_section(&mut state);
+            let north = random_section(&mut state);
+            let south = random_section(&mut state);
+            let west = random_section(&mut state);
+            let east = random_section(&mut state);
+            let neighbors = SectionNeighbors {
+                down: Some(&down),
+                up: Some(&up),
+                north: Some(&north),
+                south: Some(&south),
+                west: Some(&west),
+                east: Some(&east),
+            };
+
+            let reference = mesh_section(&section, &neighbors);
+            let greedy = mesh_section_greedy(&section, &neighbors);
+            let oracle = oracle_surface(&section, &neighbors);
+
+            assert_eq!(mesh_to_surface(&reference), oracle);
+            assert_eq!(mesh_to_surface(&greedy), oracle);
+            assert!(greedy.triangle_count() <= reference.triangle_count());
+        }
+    }
+
+    #[test]
+    fn greedy_reduces_triangle_count_on_terrain() {
+        let generator = TerrainGenerator::new(12345, TerrainParams::default());
+        let section = generator.generate_section(0, 4, 0);
+        let down = generator.generate_section(0, 3, 0);
+        let up = generator.generate_section(0, 5, 0);
+        let north = generator.generate_section(0, 4, -1);
+        let south = generator.generate_section(0, 4, 1);
+        let west = generator.generate_section(-1, 4, 0);
+        let east = generator.generate_section(1, 4, 0);
+        let neighbors = SectionNeighbors {
+            down: Some(&down),
+            up: Some(&up),
+            north: Some(&north),
+            south: Some(&south),
+            west: Some(&west),
+            east: Some(&east),
+        };
+
+        let reference = mesh_section(&section, &neighbors);
+        let greedy = mesh_section_greedy(&section, &neighbors);
+
+        assert_eq!(mesh_to_surface(&reference), mesh_to_surface(&greedy));
+        assert!(greedy.triangle_count() < reference.triangle_count());
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+    struct SurfaceFace {
+        x: u8,
+        y: u8,
+        z: u8,
+        face: u8,
+        state: u16,
+    }
+
+    fn oracle_surface(
+        section: &PalettedSection,
+        neighbors: &SectionNeighbors,
+    ) -> BTreeSet<SurfaceFace> {
+        let mut set = BTreeSet::new();
+        for y in 0..16u8 {
+            for z in 0..16u8 {
+                for x in 0..16u8 {
+                    let state = section.get(index(y, z, x));
+                    if state == AIR {
+                        continue;
+                    }
+                    for &face in &Face::ALL {
+                        if face_neighbor(section, neighbors, face, x, y, z) == AIR {
+                            set.insert(SurfaceFace {
+                                x,
+                                y,
+                                z,
+                                face: face as u8,
+                                state,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        set
+    }
+
+    fn mesh_to_surface(mesh: &Mesh) -> BTreeSet<SurfaceFace> {
+        let mut set = BTreeSet::new();
+        for chunk in mesh.indices.as_chunks::<6>().0 {
+            let base = chunk[0] as usize;
+            let face = mesh.vertices[base].face();
+            let state = mesh.vertices[base].uv_index();
+            let axes = FACE_AXES[face as usize];
+            let n = mesh.vertices[base].pos()[axes.normal];
+            let mut u_min = 16u8;
+            let mut u_max = 0u8;
+            let mut v_min = 16u8;
+            let mut v_max = 0u8;
+            for offset in 0..4 {
+                let pos = mesh.vertices[base + offset].pos();
+                u_min = u_min.min(pos[axes.u]);
+                u_max = u_max.max(pos[axes.u]);
+                v_min = v_min.min(pos[axes.v]);
+                v_max = v_max.max(pos[axes.v]);
+            }
+            let block_normal = if axes.positive { n - 1 } else { n };
+            for u in u_min..u_max {
+                for v in v_min..v_max {
+                    let mut pos = [0u8; 3];
+                    pos[axes.normal] = block_normal;
+                    pos[axes.u] = u;
+                    pos[axes.v] = v;
+                    set.insert(SurfaceFace {
+                        x: pos[0],
+                        y: pos[1],
+                        z: pos[2],
+                        face: face as u8,
+                        state,
+                    });
+                }
+            }
+        }
+        set
+    }
+
+    fn random_section(state: &mut u64) -> PalettedSection {
+        let mut section = PalettedSection::new(AIR);
+        for cell in 0..SECTION_SIZE {
+            let r = next_u64(state);
+            if r.is_multiple_of(3) {
+                continue;
+            }
+            let block = 1 + (r >> 3) % 8;
+            section.set(cell, block as u16);
+        }
+        section
+    }
+
+    fn next_u64(state: &mut u64) -> u64 {
+        let mut x = *state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        *state = x;
+        x
     }
 
     fn set_neighbor<'a>(

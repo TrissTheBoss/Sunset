@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-205 done (next: [T-206](BACKLOG.md#t-206-greedy-mesher-with-equivalence-proof)).
+Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-206 done (next: [T-207](BACKLOG.md#t-207-geometry-arena-and-staging-ring)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -10,7 +10,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
 | M1 | COMPLETE | T-101..T-104 complete (metrics + runner core + bench harness + harness self-tests) |
-| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S), T-205 (reference mesher + packed vertex) complete |
+| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S), T-205 (reference mesher + packed vertex), T-206 (greedy mesher + equivalence proof) complete |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
 
@@ -49,6 +49,18 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-13 · T-206 greedy mesher with equivalence proof · IMPLEMENTED
+Change: Added `mesh_section_greedy`, a per-face-layer greedy mesher that merges coplanar exposed faces into maximal rectangles only when the block material (uv_index) matches, preserving the reference mesher's outward winding by scaling the shared `FACE_CORNERS` corner order. Refactored the reference `emit_face` to delegate to a shared `emit_quad` so both paths use identical geometry. Added a CPU raster/ID oracle: `oracle_surface` (from block data) and `mesh_to_surface` (de-rasterizes reference or greedy quads back into atomic block faces), plus a property test proving greedy == reference == oracle over random sections with random neighbors.
+Files / commit: crates/sunset-core/src/mesh.rs (greedy mesher + equivalence oracle/tests), crates/sunset-core/src/lib.rs (re-export mesh_section_greedy).
+Commands and exit codes:
+  cargo test -p sunset-core → 0 (28 tests; new: greedy == reference == oracle over 48 random sections, greedy reduction on BENCH-01S terrain section)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0 (fmt/clippy/lint + 69 unit tests)
+Artifacts (run IDs): none.
+Blockers: none.
+Next smallest action: T-207 geometry arena and staging ring.
+Evidence (BENCH-01S reduction, section (0,4,0) seed 12345): reference 2460 verts / 1230 tris → greedy 556 verts / 278 tris (77.4% fewer triangles).
 
 ### 2026-11-13 · T-205 reference mesher and packed vertex format · IMPLEMENTED
 Change: Added a culled-face CPU reference mesher for full cubes and fixed the M2 vertex layout. `sunset-core::mesh` defines `Face` (Down/Up/North/South/West/East), a packed 8-byte `Vertex` (pos 3×5 bits, face 3 bits, ao 2 bits, light 4 bits, uv_index 16 bits, tint_index 8 bits, 16 reserved bits), `Mesh`, `SectionNeighbors`, and `mesh_section`, which emits only faces facing air and resolves faces across section borders via the six neighbor sections (missing neighbor = air). Extracted the synthetic block IDs into `sunset-core::block` so terrain and mesh share them. Amended ADR-0005 with the quantization table.

@@ -99,7 +99,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: unit tests on hand-built sections (single block, slab of blocks, section borders).
 
 ### T-206 Greedy mesher with equivalence proof
-- Status: NOT STARTED · REQ-06 · Depends: T-205
+- Status: IMPLEMENTED · REQ-06 · Depends: T-205
 - Do: greedy merging only under the equivalence rules of [04](../04-Renderer.md); a CPU raster/ID comparison against the reference mesher.
 - Accept: property test over random sections: raster-equal output; triangle-reduction statistic reported on BENCH-01S.
 
