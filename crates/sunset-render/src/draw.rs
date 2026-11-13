@@ -52,7 +52,7 @@ pub fn build_indirect_commands(sections: &[SectionDraw], visible: &[usize]) -> V
                 instance_count: 1,
                 first_index: section.first_index,
                 base_vertex: section.base_vertex,
-                first_instance: 0,
+                first_instance: index as u32,
             }
         })
         .collect()
@@ -108,7 +108,7 @@ mod tests {
             assert_eq!(command.first_index, section.first_index);
             assert_eq!(command.base_vertex, section.base_vertex);
             assert_eq!(command.instance_count, 1);
-            assert_eq!(command.first_instance, 0);
+            assert_eq!(command.first_instance, section_index as u32);
         }
     }
 

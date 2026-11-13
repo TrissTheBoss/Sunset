@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use sunset_metrics::IntervalRing;
 use sunset_render::{
-    build_terrain_scene, view_projection, CameraUniform, CpuSpan, FrameOutcome, Renderer,
+    build_terrain_scene, view_projection, CameraUniform, CpuSpan, DrawMode, FrameOutcome, Renderer,
     RendererInit,
 };
 use winit::application::ApplicationHandler;
@@ -179,7 +179,7 @@ impl ApplicationHandler for App {
                     300.0,
                 );
                 let camera = CameraUniform::new(vp, 10.0, 250.0, [0.7, 0.8, 0.9], [1.0, 1.0, 1.0]);
-                let terrain = renderer.create_terrain(&scene, &camera);
+                let terrain = renderer.create_terrain(&scene, &camera, DrawMode::MultiDrawIndirect);
                 renderer.set_terrain(terrain);
                 self.window = Some(window);
                 self.renderer = Some(renderer);

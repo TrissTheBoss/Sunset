@@ -52,6 +52,18 @@ Blockers:
 Next smallest action:
 ```
 
+### 2026-11-13 · T-212a assemble terrain render path (slice 3: culling + indirect draws) · IN PROGRESS
+Change: Wired frustum culling and multi-draw-indirect into the terrain path. `build_indirect_commands` now emits `first_instance = section_index` (for per-instance section-origin lookup), `Renderer::new` requests `Features::INDIRECT_FIRST_INSTANCE`, and `TerrainRenderer` culls sections via `Frustum`/`visible_sections`, builds a contiguous indirect command buffer, and renders through `multi_draw_indexed_indirect` with a direct-draw fallback behind `DrawMode`.
+Files / commit: crates/sunset-render/src/terrain_renderer.rs (culling + indirect + toggle), crates/sunset-render/src/draw.rs (first_instance), crates/sunset-render/src/lib.rs (feature request + create_terrain mode), crates/sunset-client/src/main.rs (DrawMode).
+Commands and exit codes:
+  cargo test -p sunset-render → 0 (42 tests; new: DrawCommand 20-byte serialization round-trip)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0 (fmt/clippy/lint + 119 unit tests)
+  target/debug/sunset-client bench/scenes/bench-00.toml 0 → 0 (culled + multi-draw-indexed-indirect; no validation error; 9,904 frames / 5 s ≈ 1,981 FPS debug on Wayland)
+Artifacts (run IDs): ad hoc debug run (culling + indirect draws).
+Blockers: none for this slice.
+Next smallest action: T-212a slice 4 — geometry-arena upload + job-system meshing + upload budget (the remaining PERF-A05/A07 pieces).
+
 ### 2026-11-13 · T-212a assemble terrain render path (slice 2: terrain pipeline + client wiring) · IN PROGRESS
 Change: Assembled the terrain render path. `sunset-render::terrain_renderer` provides `CameraUniform` (112-byte WGSL-matched layout, offset-tested) and `TerrainRenderer` (creates the terrain pipeline from `TERRAIN_SHADER` with an 8-byte `Uint32x2` vertex layout, a 9-layer synthetic texture array, a camera uniform, a section-origin storage buffer, and the packed geometry; renders per-section `draw_indexed` using `instance_index` for origin lookup). Switched the WGSL `Camera` colors and `section_origins` to `vec4` to avoid `vec3` uniform/storage alignment pitfalls. Wired `Renderer::create_terrain`/`set_terrain` and the client to build a 3×3 terrain scene + camera and render it.
 Files / commit: crates/sunset-render/src/terrain_renderer.rs (new), crates/sunset-render/shaders/terrain.wgsl (vec4 uniforms/storage), crates/sunset-render/src/lib.rs, crates/sunset-client/src/main.rs.

@@ -1,4 +1,6 @@
 use crate::camera::Mat4;
+use crate::culling::Frustum;
+use crate::draw::{build_indirect_commands, visible_sections, DrawCommand, DrawMode, SectionDraw};
 use crate::shader::TERRAIN_SHADER;
 use crate::terrain_scene::TerrainScene;
 use std::borrow::Cow;
@@ -44,6 +46,10 @@ impl CameraUniform {
         }
     }
 
+    pub fn view_proj(&self) -> Mat4 {
+        Mat4 { m: self.view_proj }
+    }
+
     fn to_bytes(self) -> [u8; 112] {
         let mut out = [0u8; 112];
         let mut offset = 0;
@@ -68,19 +74,16 @@ impl CameraUniform {
     }
 }
 
-#[derive(Clone, Copy)]
-struct DrawRange {
-    first_index: u32,
-    index_count: u32,
-    base_vertex: i32,
-}
-
 pub struct TerrainRenderer {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    draws: Vec<DrawRange>,
+    indirect_buffer: wgpu::Buffer,
+    draw_count: u32,
+    mode: DrawMode,
+    section_draws: Vec<SectionDraw>,
+    visible: Vec<usize>,
 }
 
 impl TerrainRenderer {
@@ -90,6 +93,7 @@ impl TerrainRenderer {
         color_format: wgpu::TextureFormat,
         scene: &TerrainScene,
         camera: &CameraUniform,
+        mode: DrawMode,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
@@ -290,23 +294,43 @@ impl TerrainRenderer {
             ],
         });
 
-        let draws = scene
+        let section_draws: Vec<SectionDraw> = scene
             .sections
             .iter()
-            .map(|section| DrawRange {
-                first_index: section.first_index,
+            .map(|section| SectionDraw {
+                aabb: section.aabb,
                 index_count: section.index_count,
+                first_index: section.first_index,
                 base_vertex: section.base_vertex,
             })
             .collect();
+        let frustum = Frustum::from_view_projection(&camera.view_proj().as_array());
+        let visible = visible_sections(&section_draws, &frustum);
+        let commands = build_indirect_commands(&section_draws, &visible);
+        let indirect_bytes: Vec<u8> = commands.iter().flat_map(command_bytes).collect();
+        let indirect_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: indirect_bytes.len() as u64,
+            usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&indirect_buffer, 0, &indirect_bytes);
 
         Self {
             pipeline,
             bind_group,
             vertex_buffer,
             index_buffer,
-            draws,
+            indirect_buffer,
+            draw_count: commands.len() as u32,
+            mode,
+            section_draws,
+            visible,
         }
+    }
+
+    pub fn visible_count(&self) -> usize {
+        self.visible.len()
     }
 
     pub fn render(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
@@ -330,15 +354,32 @@ impl TerrainRenderer {
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        for (section_index, draw) in self.draws.iter().enumerate() {
-            let instance = section_index as u32;
-            pass.draw_indexed(
-                draw.first_index..draw.first_index + draw.index_count,
-                draw.base_vertex,
-                instance..instance + 1,
-            );
+        match self.mode {
+            DrawMode::MultiDrawIndirect => {
+                pass.multi_draw_indexed_indirect(&self.indirect_buffer, 0, self.draw_count);
+            }
+            _ => {
+                for &index in &self.visible {
+                    let draw = &self.section_draws[index];
+                    pass.draw_indexed(
+                        draw.first_index..draw.first_index + draw.index_count,
+                        draw.base_vertex,
+                        index as u32..index as u32 + 1,
+                    );
+                }
+            }
         }
     }
+}
+
+fn command_bytes(command: &DrawCommand) -> [u8; 20] {
+    let mut out = [0u8; 20];
+    out[0..4].copy_from_slice(&command.index_count.to_le_bytes());
+    out[4..8].copy_from_slice(&command.instance_count.to_le_bytes());
+    out[8..12].copy_from_slice(&command.first_index.to_le_bytes());
+    out[12..16].copy_from_slice(&command.base_vertex.to_le_bytes());
+    out[16..20].copy_from_slice(&command.first_instance.to_le_bytes());
+    out
 }
 
 #[cfg(test)]
@@ -360,5 +401,23 @@ mod tests {
                 .len(),
             112
         );
+    }
+
+    #[test]
+    fn draw_command_serializes_to_twenty_bytes() {
+        let command = DrawCommand {
+            index_count: 6,
+            instance_count: 1,
+            first_index: 12,
+            base_vertex: 8,
+            first_instance: 3,
+        };
+        assert_eq!(command_bytes(&command).len(), 20);
+        let bytes = command_bytes(&command);
+        assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), 6);
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 12);
+        assert_eq!(i32::from_le_bytes(bytes[12..16].try_into().unwrap()), 8);
+        assert_eq!(u32::from_le_bytes(bytes[16..20].try_into().unwrap()), 3);
     }
 }

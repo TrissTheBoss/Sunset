@@ -99,13 +99,14 @@ impl Renderer {
         .map_err(|error| format!("request adapter: {error}"))?;
         let timestamp_supported =
             init.timing && adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+        let mut required_features = wgpu::Features::empty();
+        if timestamp_supported {
+            required_features |= wgpu::Features::TIMESTAMP_QUERY;
+        }
+        required_features |= wgpu::Features::INDIRECT_FIRST_INSTANCE;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: None,
-            required_features: if timestamp_supported {
-                wgpu::Features::TIMESTAMP_QUERY
-            } else {
-                wgpu::Features::empty()
-            },
+            required_features,
             required_limits: wgpu::Limits::default(),
             ..Default::default()
         }))
@@ -142,8 +143,20 @@ impl Renderer {
         self.gpu_timer = None;
     }
 
-    pub fn create_terrain(&self, scene: &TerrainScene, camera: &CameraUniform) -> TerrainRenderer {
-        TerrainRenderer::new(&self.device, &self.queue, self.config.format, scene, camera)
+    pub fn create_terrain(
+        &self,
+        scene: &TerrainScene,
+        camera: &CameraUniform,
+        mode: DrawMode,
+    ) -> TerrainRenderer {
+        TerrainRenderer::new(
+            &self.device,
+            &self.queue,
+            self.config.format,
+            scene,
+            camera,
+            mode,
+        )
     }
 
     pub fn adapter_name(&self) -> &str {
