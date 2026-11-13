@@ -129,7 +129,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: one draw per material class; 0 allocations per frame with changing text.
 
 ### T-212a Assemble the BENCH-01S terrain render path
-- Status: NOT STARTED · REQ-03 · Depends: T-204..T-211
+- Status: IN PROGRESS · REQ-03 · Depends: T-204..T-211
 - Do: wire terrain generation → greedy meshing → geometry-arena upload (bounded by PERF-A07) → frustum culling → contiguous indirect-draw list → terrain pipeline (T-209 WGSL) → single submit, driven by the job system. Split further if it exceeds one reviewable diff.
 - Accept: `cargo xtask bench --suite bench-01s` runs and renders synthetic terrain; terrain draw count ≤ 64; direct vs indirect toggle equivalence.
 

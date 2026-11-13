@@ -8,5 +8,6 @@ workspace = true
 
 [dependencies]
 pollster = "1.0.1"
+sunset-core = { path = "../sunset-core" }
 sunset-metrics = { path = "../sunset-metrics" }
 wgpu = { version = "30.0.1", default-features = false, features = ["std", "vulkan", "gles", "wgsl"] }

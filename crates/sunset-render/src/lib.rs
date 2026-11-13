@@ -2,6 +2,7 @@
 
 mod allocator;
 mod arena;
+mod camera;
 mod cpu_trace;
 mod culling;
 mod draw;
@@ -13,9 +14,11 @@ mod shader;
 mod shading;
 mod sorting;
 mod staging;
+mod terrain_scene;
 
 pub use allocator::{Range, RangeAllocator};
 pub use arena::GeometryArena;
+pub use camera::{look_at, perspective, view_projection, Mat4};
 pub use cpu_trace::{CpuSpan, CpuTrace};
 pub use culling::{Aabb, Frustum, Plane};
 pub use draw::{
@@ -31,6 +34,7 @@ pub use sorting::{sort_translucent_back_to_front, TranslucentSection};
 pub use staging::{
     StagingRing, UploadBudget, DEFAULT_UPLOAD_BUDGET_BYTES, DEFAULT_UPLOAD_BUDGET_US,
 };
+pub use terrain_scene::{build_terrain_scene, SceneSection, TerrainScene};
 
 pub struct Renderer {
     surface: wgpu::Surface<'static>,

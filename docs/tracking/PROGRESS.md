@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-212 blocked (next: [T-212a](BACKLOG.md#t-212a-assemble-the-bench-01s-terrain-render-path)).
+Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-212a in progress (next slice: wgpu terrain pipeline + client wiring).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -50,6 +50,17 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-13 · T-212a assemble terrain render path (slice 1: camera + scene builder) · IN PROGRESS
+Change: Added the pure, testable foundation for terrain assembly. `sunset-render::camera` provides column-major `Mat4`, `perspective`, `look_at`, `view_projection`, and `transform_point`. `sunset-render::terrain_scene` provides `build_terrain_scene` which generates + greedy-meshes a set of sections and packs them into flat byte/vertex + index buffers with per-section AABB/origin/base_vertex/first_index/index_count (`SceneSection`, `TerrainScene`). Added `sunset-core` as a `sunset-render` dependency (meshers/terrain generator live there).
+Files / commit: crates/sunset-render/src/camera.rs (new), crates/sunset-render/src/terrain_scene.rs (new), crates/sunset-render/src/lib.rs, crates/sunset-render/Cargo.toml (sunset-core dep).
+Commands and exit codes:
+  cargo test -p sunset-render → 0 (40 tests; new: look_at identity, perspective near/far projection, identity matrix, view-projection front point, single-section geometry/metadata, seed determinism, adjacent-section offsets)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0 (fmt/clippy/lint + 117 unit tests)
+Artifacts (run IDs): none.
+Blockers: none for this slice.
+Next smallest action: T-212a slice 2 — wgpu terrain pipeline (pipeline + texture array + uniform + section-origin storage + geometry upload) and client wiring.
 
 ### 2026-11-13 · T-212 M2 performance gate · BLOCKED
 Change: Assessed the M2 gate. Built `target/release/sunset-client` and ran `cargo xtask bench --suite bench-00`; the client still renders a clear pass only (no terrain), so BENCH-01S cannot be run meaningfully. Added `T-212a` (assemble the terrain render path) to the backlog as the missing prerequisite.
