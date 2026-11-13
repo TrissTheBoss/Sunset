@@ -89,7 +89,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: property tests for round trips; vectors for negative coordinates and extreme integers.
 
 ### T-204 Synthetic terrain and BENCH-01S
-- Status: NOT STARTED · REQ-03 · Depends: T-203
+- Status: IMPLEMENTED · REQ-03 · Depends: T-203
 - Do: deterministic generator (own noise, not vanilla worldgen) producing hills, caves, overhangs, foliage-like cutout and water so that the visible-section count and vertex volume approximate BENCH-01 (document the calibration in `bench/scenes/bench-01s.toml`).
 - Accept: generation is seed-deterministic (hash test).
 

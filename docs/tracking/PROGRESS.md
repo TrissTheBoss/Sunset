@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-203 done (next: [T-204](BACKLOG.md#t-204-synthetic-terrain-and-bench-01s)).
+Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-204 done (next: [T-205](BACKLOG.md#t-205-reference-mesher-and-packed-vertex-format)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -10,7 +10,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
 | M1 | COMPLETE | T-101..T-104 complete (metrics + runner core + bench harness + harness self-tests) |
-| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics) complete |
+| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S) complete |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
 
@@ -49,6 +49,17 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-13 · T-204 synthetic terrain and BENCH-01S · IMPLEMENTED
+Change: Added `sunset-core` terrain generation. `TerrainGenerator` produces deterministic synthetic terrain from a seed using original value noise (2D for height, 3D for caves), deterministic hash-based tree placement (log/leaves cutout), water fill below sea level, and a block palette (AIR/STONE/DIRT/GRASS/SAND/WATER/LEAVES/LOG/SNOW). Wrote `bench/scenes/bench-01s.toml` documenting the calibration (seed/height/sea-level/cave/foliage/snow params matching `TerrainParams::default()`).
+Files / commit: crates/sunset-core/src/terrain.rs (new), crates/sunset-core/src/lib.rs (mod + re-exports), bench/scenes/bench-01s.toml (new).
+Commands and exit codes:
+  cargo test -p sunset-core → 0 (19 tests; terrain tests: seed-determinism hash, terrain/water block kinds, foliage cutout)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0 (fmt/clippy/lint + 60 unit tests)
+Artifacts (run IDs): none.
+Blockers: none.
+Next smallest action: T-205 reference mesher and packed vertex format.
 
 ### 2026-11-12 · T-203 sunset-core basics · IMPLEMENTED
 Change: Created the `sunset-core` crate (no dependencies). Added Java-semantics integer helpers (`floor_div`/`floor_mod` matching Java's Math.floorDiv/floorMod, including the i32::MIN ÷ -1 edge case), block/section/chunk coordinate types (`BlockPos`/`SectionPos`/`ChunkPos` with `>> 4`/`& 15` floor-division/local decomposition and YZX section index), a dense `BlockState(u16)` handle, and a `PalettedSection` with the target's bits-per-entry rules (4-bit indirect ≤16, 8-bit indirect ≤256, 16-bit direct, with palette growth/rebuild).

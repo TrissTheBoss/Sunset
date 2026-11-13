@@ -1,0 +1,24 @@
+[scene]
+name = "bench-01s"
+world_type = "synthetic"
+radius_chunks = 16
+
+[synthetic]
+seed = 12345
+base_height = 64
+height_amplitude = 20.0
+sea_level = 62
+cave_threshold = 0.55
+foliage_density = 0.02
+snow_line = 96
+
+[settings]
+render_distance = 8
+simulation_distance = 8
+fov = 70
+
+[timing]
+warmup_s = 60
+sampling_s = 120
+runs = 5
+alternate_baseline = true
