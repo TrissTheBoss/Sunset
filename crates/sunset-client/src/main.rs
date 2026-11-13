@@ -166,12 +166,12 @@ impl ApplicationHandler for App {
                     renderer.present_mode_label()
                 );
                 let coords: Vec<(i32, i32, i32)> = (-1..=1)
-                    .flat_map(|sx| (-1..=1).map(move |sz| (sx, 4, sz)))
+                    .flat_map(|sx| (-1..=1).flat_map(move |sz| (2..=5).map(move |sy| (sx, sy, sz))))
                     .collect();
                 let scene = build_terrain_scene(12345, &coords);
                 let vp = view_projection(
-                    [8.0, 70.0, 40.0],
-                    [8.0, 66.0, 0.0],
+                    [8.0, 100.0, 40.0],
+                    [8.0, 70.0, 0.0],
                     [0.0, 1.0, 0.0],
                     (70.0f32).to_radians(),
                     16.0 / 9.0,
