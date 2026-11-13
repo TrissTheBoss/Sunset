@@ -18,7 +18,7 @@ Create a crate only when it has a real consumer. Planned introduction:
 | `sunset-metrics` | Preallocated frame/tick interval rings, percentiles, counting allocator, counters | none | M1 |
 | `sunset-core` | Coordinates, IDs/handles, paletted containers, Java-semantics arithmetic, RNG | none | M2 |
 | `sunset-render` | Device, frame loop, arenas, meshers, passes, WGSL | `sunset-core`, `sunset-metrics` | M2 |
-| `sunset-jobs` | Worker pool, priorities, revisions, cancellation | `sunset-core` | M2 |
+| `sunset-jobs` | Worker pool, priorities, revisions, cancellation | none | M2 |
 | `sunset-assets` | Read-only local asset resolver, models, atlases, caches | `sunset-core` | M3 |
 | `sunset-storage` | Anvil/NBT read (M3), transactions/write (M4) | `sunset-core` | M3 |
 | `sunset-sim` | World rules, ticks, collision | `sunset-core`, `sunset-assets` | M3 skeleton, M4 rules |

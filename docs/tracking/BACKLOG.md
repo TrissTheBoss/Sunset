@@ -119,7 +119,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: debug-buffer checks against analytic expectations ([08](../08-Visual-QA.md) comparator 2).
 
 ### T-210 Job system
-- Status: NOT STARTED · REQ-23 · Depends: T-203
+- Status: IMPLEMENTED · REQ-23 · Depends: T-203
 - Crate: `sunset-jobs`.
 - Do: worker pool (cores − 2), priority queue, revisions, stale-result rejection, cancellation, bounded queues.
 - Accept: controlled-scheduling tests for stale rejection and cancellation; no unbounded growth under flood.

@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-209 done (next: [T-210](BACKLOG.md#t-210-job-system)).
+Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-210 done (next: [T-211](BACKLOG.md#t-211-hud-batch-and-synthetic-font)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -10,7 +10,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
 | M1 | COMPLETE | T-101..T-104 complete (metrics + runner core + bench harness + harness self-tests) |
-| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S), T-205 (reference mesher + packed vertex), T-206 (greedy mesher + equivalence proof), T-207 (geometry arena + staging ring), T-208 (culling + indirect draws), T-209 (terrain shading) complete |
+| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S), T-205 (reference mesher + packed vertex), T-206 (greedy mesher + equivalence proof), T-207 (geometry arena + staging ring), T-208 (culling + indirect draws), T-209 (terrain shading), T-210 (job system) complete |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
 
@@ -49,6 +49,17 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-13 · T-210 job system · IMPLEMENTED
+Change: Added the `sunset-jobs` crate (no dependencies; the planned `sunset-core` dependency is deferred until jobs carry domain keys). `PendingQueue<T>` is a bounded priority queue (BinaryHeap with higher-priority-first and FIFO-within-priority via a sequence tie-breaker, capacity-bound `enqueue`, `cancel(key)`). `RevisionTable` tracks per-key revisions with `bump`/`is_stale`. `Job`/`JobResult` carry key/revision/priority, and `is_stale` flags stale results. `JobSystem<T>` is a worker pool (`worker_count()` = logical cores − 2, min 1) with bounded pending + result queues (sync_channel backpressure), `submit`/`cancel`/`try_recv`/`recv`, and clean shutdown via `Drop`.
+Files / commit: crates/sunset-jobs/* (new: lib.rs, queue.rs, revision.rs, system.rs), Cargo.toml (workspace member).
+Commands and exit codes:
+  cargo test -p sunset-jobs → 0 (14 tests; queue priority/FIFO/bound/flood/cancel, revision bump/stale, worker_count, thread-pool run/cancel-pending/stale/submit-full via controlled channel scheduling)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0 (fmt/clippy/lint + 104 unit tests)
+Artifacts (run IDs): none.
+Blockers: none.
+Next smallest action: T-211 HUD batch and synthetic font.
 
 ### 2026-11-13 · T-209 terrain shading · IMPLEMENTED
 Change: Added the terrain shading model and original WGSL. `sunset-render::shading` provides the pure reference math (light_brightness light/15, ao_factor 1-ao/3, fog_factor linear+clamped, apply_tint componentwise, face_uv in-plane axes, shade_color combining tint/light/AO/fog, `Fog` params) with analytic endpoint tests (comparator 2). `sunset-render::sorting` sorts translucent sections back-to-front by squared distance. `shaders/terrain.wgsl` is an original comment-free module with a shared vertex entry point (unpacks the packed 8-byte vertex, computes face UV and fog distance) and three fragment entry points (`fs_opaque`, `fs_cutout` with alpha discard, `fs_translucent` with alpha) sampling a texture array + lightmap/AO/tint/fog; `shader.rs` exposes it via `TERRAIN_SHADER`.

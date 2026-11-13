@@ -1851,6 +1851,10 @@ name = "sunset-core"
 version = "0.1.0"
 
 [[package]]
+name = "sunset-jobs"
+version = "0.1.0"
+
+[[package]]
 name = "sunset-metrics"
 version = "0.1.0"
 dependencies = [
