@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sunset_metrics::IntervalRing;
-use sunset_render::{FrameOutcome, Renderer, RendererInit};
+use sunset_render::{CpuSpan, FrameOutcome, Renderer, RendererInit};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
@@ -50,6 +50,9 @@ struct Metrics {
     elapsed_s: f64,
     present_mode: String,
     intervals_ms: Vec<f32>,
+    gpu_pass_ms: f32,
+    cpu_command_encode_us: f64,
+    cpu_acquire_present_us: f64,
 }
 
 struct App {
@@ -76,7 +79,8 @@ impl App {
     }
 
     fn finish(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(renderer) = &self.renderer {
+        if let Some(renderer) = &mut self.renderer {
+            renderer.readback_gpu_timing();
             let metrics = Metrics {
                 schema: 1,
                 scene: self.run.name.clone(),
@@ -84,6 +88,9 @@ impl App {
                 elapsed_s: self.run.sampling.as_secs_f64(),
                 present_mode: renderer.present_mode_label().to_string(),
                 intervals_ms: self.intervals.values(),
+                gpu_pass_ms: renderer.gpu_pass_ms(),
+                cpu_command_encode_us: renderer.cpu_span_us(CpuSpan::CommandEncode),
+                cpu_acquire_present_us: renderer.cpu_span_us(CpuSpan::AcquirePresent),
             };
             if let Ok(json) = serde_json::to_string(&metrics) {
                 println!("{json}");
@@ -139,9 +146,13 @@ impl ApplicationHandler for App {
             }
         };
         let size = window.inner_size();
+        let timing = std::env::var("SUNSET_GPU_TIMING")
+            .map(|value| value != "0")
+            .unwrap_or(true);
         let init = RendererInit {
             width: size.width,
             height: size.height,
+            timing,
             ..Default::default()
         };
         match Renderer::new(Arc::clone(&window), &init) {

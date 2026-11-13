@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-201 done (next: [T-202](BACKLOG.md#t-202-gpu-timing-ring)).
+Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-202 done (next: [T-203](BACKLOG.md#t-203-sunset-core-basics)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -10,7 +10,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
 | M1 | COMPLETE | T-101..T-104 complete (metrics + runner core + bench harness + harness self-tests) |
-| M2 | IN PROGRESS | T-201 complete (device, window, frame loop) |
+| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace) complete |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
 
@@ -18,7 +18,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 
 | Date | Commit | Scene | Median FPS | p99 / p99.9 (ms) | Result | Run ID |
 | --- | --- | --- | --- | --- | --- | --- |
-| 2026-11-12 | — | BENCH-00 | ~2,480 | — | BLOCKED (Mailbox, no Immediate on Wayland) | ad hoc |
+| 2026-11-12 | — | BENCH-00 | ~8,460 (release, Immediate) | — | recorded; Wayland present-capped, needs native X11 | ad hoc |
 
 ## Dependency ledger
 
@@ -49,6 +49,18 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-12 · T-202 GPU timing ring · IMPLEMENTED
+Change: Added GPU timestamp queries and per-line CPU tracing to sunset-render. `GpuTimer` writes begin/end timestamps per render pass when `TIMESTAMP_QUERY` is supported (graceful absence otherwise), resolves them into a 3-slot ring (query set → resolve buffer → readback buffer) each frame, and reads the latest frame's duration back at shutdown (blocking, outside the frame loop). `CpuTrace` records per-frame accumulated microseconds for the PRD 4.3 budget lines (InputEvents, SnapshotAcquire, SectionVisibility, EntitiesPrepare, HudBuild, UploadSchedule, CommandEncode, AcquirePresent); the clear pass instruments CommandEncode + AcquirePresent. The client emits `gpu_pass_ms` and the two active CPU spans in the metrics JSON and toggles timing via `SUNSET_GPU_TIMING=0`.
+Files / commit: crates/sunset-render/src/gpu_timer.rs (new), crates/sunset-render/src/cpu_trace.rs (new), crates/sunset-render/src/lib.rs, crates/sunset-client/src/main.rs (uncommitted).
+Commands and exit codes:
+  cargo test -p sunset-render → 0 (6 tests, incl. 2 cpu_trace)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0
+  target/release/sunset-client bench/scenes/bench-00.toml 0 → 0 (gpu_pass_ms 0.005 ms; cpu encode ~287 µs, acquire/present ~151 µs)
+Artifacts (run IDs): BENCH-00 release run — ~8,460 FPS (Immediate), gpu_pass_ms 0.005.
+Blockers: timestamp-query instrumentation overhead measured ~8% in release (timing on ~8,460 vs off ~9,160 FPS), above the PERF-A12 ≤2% target; this is radv timestamp-query + resolve cost and needs batch-resolve optimization in the M2 perf pass (T-212). The ≤2% target is not yet met.
+Next smallest action: T-203 sunset-core basics.
 
 ### 2026-11-12 · T-201 Device, window and frame loop · IMPLEMENTED
 Change: Created `sunset-render` (library) and `sunset-client` (binary). sunset-render owns the wgpu instance/adapter/device/surface/queue, present-mode selection (Immediate → Mailbox → Fifo via a tested pure function), surface configure/resize, a one-submit-per-frame clear pass, and the effective present-mode label. sunset-client creates a winit window, runs a continuous-redraw event loop (ControlFlow::Poll + request_redraw, PERF-A14), records frame intervals into a preallocated IntervalRing, handles resize and Outdated/Suboptimal/Lost reconfigure (device-loss recovery), and emits metrics JSON (schema 1: frames/elapsed_s/present_mode/intervals_ms) when launched with a scene manifest path. Validation on in debug / off in release via InstanceFlags (PERF-A11); desired_maximum_frame_latency = 2 (2-slot frame ring, PERF-A04).

@@ -79,7 +79,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: BENCH-00 > 20,000 FPS on the owner machine (or recorded value plus analysis); 0 allocations per frame; 0 resource creations per frame after warm-up.
 
 ### T-202 GPU timing ring
-- Status: NOT STARTED · Depends: T-201
+- Status: IMPLEMENTED · Depends: T-201
 - Do: timestamp queries per pass when supported, resolved into a ring and read 2 frames later (PERF-A12); per-line CPU tracing spans for the PRD 4.3 budget table.
 - Accept: on/off paired run shows ≤ 2% overhead; graceful absence when timestamps are unsupported.
 
