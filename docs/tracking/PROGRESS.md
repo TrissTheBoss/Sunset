@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-210 done (next: [T-211](BACKLOG.md#t-211-hud-batch-and-synthetic-font)).
+Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-211 done (next: [T-212](BACKLOG.md#t-212-m2-performance-gate)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -10,7 +10,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
 | M1 | COMPLETE | T-101..T-104 complete (metrics + runner core + bench harness + harness self-tests) |
-| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S), T-205 (reference mesher + packed vertex), T-206 (greedy mesher + equivalence proof), T-207 (geometry arena + staging ring), T-208 (culling + indirect draws), T-209 (terrain shading), T-210 (job system) complete |
+| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S), T-205 (reference mesher + packed vertex), T-206 (greedy mesher + equivalence proof), T-207 (geometry arena + staging ring), T-208 (culling + indirect draws), T-209 (terrain shading), T-210 (job system), T-211 (HUD batch + synthetic font) complete |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
 
@@ -49,6 +49,17 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-13 · T-211 HUD batch and synthetic font · IMPLEMENTED
+Change: Added the HUD batching layer and a synthetic 5×7 bitmap font. `sunset-render::font` provides `glyph_rows` with original bitmaps for 0-9, A-Z, space and `.`/`:`/`-` plus width/height/advance constants (unsupported chars → None). `sunset-render::hud` provides `HudVertex`, `HudMaterial` (Solid/Text), and `HudBatch`: fixed-capacity `Box<[...]>` vertex/index buffers per material (allocated once at `new`, the per-frame path is pure indexed writes), `clear` (no dealloc), `push_rect`/`push_text`, and `draw_count` (one draw per non-empty material class).
+Files / commit: crates/sunset-render/src/font.rs (new), crates/sunset-render/src/hud.rs (new), crates/sunset-render/src/lib.rs (modules + re-exports).
+Commands and exit codes:
+  cargo test -p sunset-render → 0 (33 tests; new: font glyph bitmaps/supported set/unsupported, HUD one-draw-per-material, changing-text fixed-buffer reuse, unsupported-char advance)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0 (fmt/clippy/lint + 110 unit tests)
+Artifacts (run IDs): none.
+Blockers: the strict `count_alloc` 0-allocation assertion runs in the bench build (T-212) where the counting allocator is active; T-211 guarantees allocation-free frames by construction (fixed boxed slices, pure writes in the frame path).
+Next smallest action: T-212 M2 performance gate.
 
 ### 2026-11-13 · T-210 job system · IMPLEMENTED
 Change: Added the `sunset-jobs` crate (no dependencies; the planned `sunset-core` dependency is deferred until jobs carry domain keys). `PendingQueue<T>` is a bounded priority queue (BinaryHeap with higher-priority-first and FIFO-within-priority via a sequence tie-breaker, capacity-bound `enqueue`, `cancel(key)`). `RevisionTable` tracks per-key revisions with `bump`/`is_stale`. `Job`/`JobResult` carry key/revision/priority, and `is_stale` flags stale results. `JobSystem<T>` is a worker pool (`worker_count()` = logical cores − 2, min 1) with bounded pending + result queues (sync_channel backpressure), `submit`/`cancel`/`try_recv`/`recv`, and clean shutdown via `Drop`.

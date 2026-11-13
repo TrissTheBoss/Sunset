@@ -5,7 +5,9 @@ mod arena;
 mod cpu_trace;
 mod culling;
 mod draw;
+mod font;
 mod gpu_timer;
+mod hud;
 mod present_mode;
 mod shader;
 mod shading;
@@ -19,7 +21,9 @@ pub use culling::{Aabb, Frustum, Plane};
 pub use draw::{
     build_indirect_commands, select_draw_mode, visible_sections, DrawCommand, DrawMode, SectionDraw,
 };
+pub use font::{glyph_rows, GLYPH_ADVANCE, GLYPH_HEIGHT, GLYPH_WIDTH};
 pub use gpu_timer::GpuTimer;
+pub use hud::{HudBatch, HudMaterial, HudVertex};
 pub use present_mode::select_present_mode;
 pub use shader::TERRAIN_SHADER;
 pub use shading::{ao_factor, apply_tint, face_uv, fog_factor, light_brightness, shade_color, Fog};

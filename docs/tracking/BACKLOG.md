@@ -125,7 +125,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: controlled-scheduling tests for stale rejection and cancellation; no unbounded growth under flood.
 
 ### T-211 HUD batch and synthetic font
-- Status: NOT STARTED · REQ-19 · Depends: T-201
+- Status: IMPLEMENTED · REQ-19 · Depends: T-201
 - Accept: one draw per material class; 0 allocations per frame with changing text.
 
 ### T-212 M2 performance gate
