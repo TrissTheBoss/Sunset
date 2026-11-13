@@ -1,12 +1,20 @@
 #![forbid(unsafe_code)]
 
+mod allocator;
+mod arena;
 mod cpu_trace;
 mod gpu_timer;
 mod present_mode;
+mod staging;
 
+pub use allocator::{Range, RangeAllocator};
+pub use arena::GeometryArena;
 pub use cpu_trace::{CpuSpan, CpuTrace};
 pub use gpu_timer::GpuTimer;
 pub use present_mode::select_present_mode;
+pub use staging::{
+    StagingRing, UploadBudget, DEFAULT_UPLOAD_BUDGET_BYTES, DEFAULT_UPLOAD_BUDGET_US,
+};
 
 pub struct Renderer {
     surface: wgpu::Surface<'static>,

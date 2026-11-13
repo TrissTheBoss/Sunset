@@ -104,7 +104,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: property test over random sections: raster-equal output; triangle-reduction statistic reported on BENCH-01S.
 
 ### T-207 Geometry arena and staging ring
-- Status: NOT STARTED · REQ-03 · Depends: T-201, T-205
+- Status: IMPLEMENTED · REQ-03 · Depends: T-201, T-205
 - Do: fixed-size GPU buffers with a free-list sub-allocator, a staging ring that respects in-flight frames, per-frame upload budget (PERF-A07).
 - Accept: allocator property tests (no overlap, full reuse); no write to an in-flight region (debug assertion test).
 

@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-206 done (next: [T-207](BACKLOG.md#t-207-geometry-arena-and-staging-ring)).
+Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-207 done (next: [T-208](BACKLOG.md#t-208-culling-and-indirect-draws)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -10,7 +10,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
 | M1 | COMPLETE | T-101..T-104 complete (metrics + runner core + bench harness + harness self-tests) |
-| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S), T-205 (reference mesher + packed vertex), T-206 (greedy mesher + equivalence proof) complete |
+| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S), T-205 (reference mesher + packed vertex), T-206 (greedy mesher + equivalence proof), T-207 (geometry arena + staging ring) complete |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
 
@@ -49,6 +49,17 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-13 · T-207 geometry arena and staging ring · IMPLEMENTED
+Change: Added render-side allocation infrastructure. `sunset-render::allocator` provides `RangeAllocator`, a first-fit free-list sub-allocator over a fixed byte capacity with alignment, coalescing and a defensive double-free debug assert. `sunset-render::staging` provides `StagingRing` (per-slot sub-allocators plus in-flight frame tracking that debug-asserts when a slot is reused before its owner frame retires) and `UploadBudget` (PERF-A07 default 2 MiB / 25 µs). `sunset-render::arena` provides `GeometryArena`, fixed-size wgpu VERTEX/INDEX buffers (COPY_DST for staging uploads) created at load with a `RangeAllocator` per buffer.
+Files / commit: crates/sunset-render/src/allocator.rs (new), crates/sunset-render/src/staging.rs (new), crates/sunset-render/src/arena.rs (new), crates/sunset-render/src/lib.rs (modules + re-exports).
+Commands and exit codes:
+  cargo test -p sunset-render → 0 (11 tests; new: allocator no-overlap/full-reuse accounting property test, alignment, reuse; staging in-flight window reuse + debug-assert should-panic)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0 (fmt/clippy/lint + 74 unit tests)
+Artifacts (run IDs): none.
+Blockers: none.
+Next smallest action: T-208 culling and indirect draws.
 
 ### 2026-11-13 · T-206 greedy mesher with equivalence proof · IMPLEMENTED
 Change: Added `mesh_section_greedy`, a per-face-layer greedy mesher that merges coplanar exposed faces into maximal rectangles only when the block material (uv_index) matches, preserving the reference mesher's outward winding by scaling the shared `FACE_CORNERS` corner order. Refactored the reference `emit_face` to delegate to a shared `emit_quad` so both paths use identical geometry. Added a CPU raster/ID oracle: `oracle_surface` (from block data) and `mesh_to_surface` (de-rasterizes reference or greedy quads back into atomic block faces), plus a property test proving greedy == reference == oracle over random sections with random neighbors.
