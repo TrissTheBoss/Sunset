@@ -7,6 +7,9 @@ mod culling;
 mod draw;
 mod gpu_timer;
 mod present_mode;
+mod shader;
+mod shading;
+mod sorting;
 mod staging;
 
 pub use allocator::{Range, RangeAllocator};
@@ -18,6 +21,9 @@ pub use draw::{
 };
 pub use gpu_timer::GpuTimer;
 pub use present_mode::select_present_mode;
+pub use shader::TERRAIN_SHADER;
+pub use shading::{ao_factor, apply_tint, face_uv, fog_factor, light_brightness, shade_color, Fog};
+pub use sorting::{sort_translucent_back_to_front, TranslucentSection};
 pub use staging::{
     StagingRing, UploadBudget, DEFAULT_UPLOAD_BUDGET_BYTES, DEFAULT_UPLOAD_BUDGET_US,
 };

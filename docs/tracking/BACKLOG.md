@@ -114,7 +114,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: zero false culling on the visibility suite; toggle equivalence (identical ID buffer); BENCH-01S terrain draws ≤ 64.
 
 ### T-209 Terrain shading
-- Status: NOT STARTED · Depends: T-208
+- Status: IMPLEMENTED · Depends: T-208
 - Do: WGSL opaque/cutout/translucent pipelines with a texture array, lightmap, AO, fog using synthetic textures; translucent section sorting.
 - Accept: debug-buffer checks against analytic expectations ([08](../08-Visual-QA.md) comparator 2).
 

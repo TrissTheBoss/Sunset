@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-208 done (next: [T-209](BACKLOG.md#t-209-terrain-shading)).
+Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-209 done (next: [T-210](BACKLOG.md#t-210-job-system)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -10,7 +10,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
 | M1 | COMPLETE | T-101..T-104 complete (metrics + runner core + bench harness + harness self-tests) |
-| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S), T-205 (reference mesher + packed vertex), T-206 (greedy mesher + equivalence proof), T-207 (geometry arena + staging ring), T-208 (culling + indirect draws) complete |
+| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S), T-205 (reference mesher + packed vertex), T-206 (greedy mesher + equivalence proof), T-207 (geometry arena + staging ring), T-208 (culling + indirect draws), T-209 (terrain shading) complete |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
 
@@ -49,6 +49,17 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-13 · T-209 terrain shading · IMPLEMENTED
+Change: Added the terrain shading model and original WGSL. `sunset-render::shading` provides the pure reference math (light_brightness light/15, ao_factor 1-ao/3, fog_factor linear+clamped, apply_tint componentwise, face_uv in-plane axes, shade_color combining tint/light/AO/fog, `Fog` params) with analytic endpoint tests (comparator 2). `sunset-render::sorting` sorts translucent sections back-to-front by squared distance. `shaders/terrain.wgsl` is an original comment-free module with a shared vertex entry point (unpacks the packed 8-byte vertex, computes face UV and fog distance) and three fragment entry points (`fs_opaque`, `fs_cutout` with alpha discard, `fs_translucent` with alpha) sampling a texture array + lightmap/AO/tint/fog; `shader.rs` exposes it via `TERRAIN_SHADER`.
+Files / commit: crates/sunset-render/shaders/terrain.wgsl (new), crates/sunset-render/src/shading.rs (new), crates/sunset-render/src/sorting.rs (new), crates/sunset-render/src/shader.rs (new), crates/sunset-render/src/lib.rs (modules + re-exports).
+Commands and exit codes:
+  cargo test -p sunset-render → 0 (27 tests; new: light/AO/fog/tint/face-uv analytic, shade_color endpoints, translucent back-to-front + noop)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0 (fmt/clippy/lint incl. WGSL comment lint + 90 unit tests)
+Artifacts (run IDs): none.
+Blockers: WGSL is not compiled here (no GPU/headless device in the unit-test loop); it is parsed by the WGSL lint and will be naga-validated at T-212 pipeline creation.
+Next smallest action: T-210 job system.
 
 ### 2026-11-13 · T-208 culling and indirect draws · IMPLEMENTED
 Change: Added conservative frustum culling and the indirect-draw command pipeline. `sunset-render::culling` provides `Aabb`, `Plane` (inward normal + distance), `Frustum` with a p-vertex `cull` test (never false-culls) and `from_view_projection` (Gribb-Hartmann plane extraction). `sunset-render::draw` provides `DrawCommand` (matching wgpu `DrawIndexedIndirectArgs`: index_count/instance_count/first_index/base_vertex i32/first_instance), `SectionDraw`, `visible_sections` (single source of truth for direct and indirect paths), `build_indirect_commands` (contiguous per-visible-section list), and `select_draw_mode` (MultiDrawIndirect when `DownlevelFlags::INDIRECT_EXECUTION`, else LoopedIndirect; Direct is a caller debug toggle).
