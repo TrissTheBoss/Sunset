@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-207 done (next: [T-208](BACKLOG.md#t-208-culling-and-indirect-draws)).
+Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-208 done (next: [T-209](BACKLOG.md#t-209-terrain-shading)).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -10,7 +10,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 | --- | --- | --- |
 | M0 | IN PROGRESS | T-001..T-007 implemented; exit blocked on server jar + owner baseline |
 | M1 | COMPLETE | T-101..T-104 complete (metrics + runner core + bench harness + harness self-tests) |
-| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S), T-205 (reference mesher + packed vertex), T-206 (greedy mesher + equivalence proof), T-207 (geometry arena + staging ring) complete |
+| M2 | IN PROGRESS | T-201 (device/window/frame loop), T-202 (GPU timing ring + CPU trace), T-203 (sunset-core basics), T-204 (synthetic terrain + BENCH-01S), T-205 (reference mesher + packed vertex), T-206 (greedy mesher + equivalence proof), T-207 (geometry arena + staging ring), T-208 (culling + indirect draws) complete |
 | M3 / VS-1 | NOT STARTED | — |
 | M4–M8 | NOT STARTED | — |
 
@@ -49,6 +49,18 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-13 · T-208 culling and indirect draws · IMPLEMENTED
+Change: Added conservative frustum culling and the indirect-draw command pipeline. `sunset-render::culling` provides `Aabb`, `Plane` (inward normal + distance), `Frustum` with a p-vertex `cull` test (never false-culls) and `from_view_projection` (Gribb-Hartmann plane extraction). `sunset-render::draw` provides `DrawCommand` (matching wgpu `DrawIndexedIndirectArgs`: index_count/instance_count/first_index/base_vertex i32/first_instance), `SectionDraw`, `visible_sections` (single source of truth for direct and indirect paths), `build_indirect_commands` (contiguous per-visible-section list), and `select_draw_mode` (MultiDrawIndirect when `DownlevelFlags::INDIRECT_EXECUTION`, else LoopedIndirect; Direct is a caller debug toggle).
+Files / commit: crates/sunset-render/src/culling.rs (new), crates/sunset-render/src/draw.rs (new), crates/sunset-render/src/lib.rs (modules + re-exports).
+Commands and exit codes:
+  cargo test -p sunset-render → 0 (18 tests; new: identity view-proj clip cube, p-vertex brute-force, visibility suite no-false-culling, 10k random-AABB no-false-culling property, draw-mode selection, visible-section brute-force + contiguous commands, direct/indirect shared section set)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0 (fmt/clippy/lint + 81 unit tests)
+Artifacts (run IDs): none.
+Blockers: none.
+Next smallest action: T-209 terrain shading.
+Note: the "BENCH-01S terrain draws ≤ 64" gate is measured at T-212 with the full camera + scene; T-208 delivers the culling + contiguous indirect list that bounds draws to one command per visible section.
 
 ### 2026-11-13 · T-207 geometry arena and staging ring · IMPLEMENTED
 Change: Added render-side allocation infrastructure. `sunset-render::allocator` provides `RangeAllocator`, a first-fit free-list sub-allocator over a fixed byte capacity with alignment, coalescing and a defensive double-free debug assert. `sunset-render::staging` provides `StagingRing` (per-slot sub-allocators plus in-flight frame tracking that debug-asserts when a slot is reused before its owner frame retires) and `UploadBudget` (PERF-A07 default 2 MiB / 25 µs). `sunset-render::arena` provides `GeometryArena`, fixed-size wgpu VERTEX/INDEX buffers (COPY_DST for staging uploads) created at load with a `RangeAllocator` per buffer.

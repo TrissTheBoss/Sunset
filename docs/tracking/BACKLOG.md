@@ -109,7 +109,7 @@ Common rules for every task: `#![forbid(unsafe_code)]`, no comments in productio
 - Accept: allocator property tests (no overlap, full reuse); no write to an in-flight region (debug assertion test).
 
 ### T-208 Culling and indirect draws
-- Status: NOT STARTED · REQ-03, REQ-06 · Depends: T-207
+- Status: IMPLEMENTED · REQ-03, REQ-06 · Depends: T-207
 - Do: section frustum culling with conservative bounds, contiguous indirect-draw list per pass, multi-draw-indirect when the pinned wgpu supports it on the backend, else a looped indirect fallback; a direct-draw reference path behind a debug toggle.
 - Accept: zero false culling on the visibility suite; toggle equivalence (identical ID buffer); BENCH-01S terrain draws ≤ 64.
 

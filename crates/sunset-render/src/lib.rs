@@ -3,6 +3,8 @@
 mod allocator;
 mod arena;
 mod cpu_trace;
+mod culling;
+mod draw;
 mod gpu_timer;
 mod present_mode;
 mod staging;
@@ -10,6 +12,10 @@ mod staging;
 pub use allocator::{Range, RangeAllocator};
 pub use arena::GeometryArena;
 pub use cpu_trace::{CpuSpan, CpuTrace};
+pub use culling::{Aabb, Frustum, Plane};
+pub use draw::{
+    build_indirect_commands, select_draw_mode, visible_sections, DrawCommand, DrawMode, SectionDraw,
+};
 pub use gpu_timer::GpuTimer;
 pub use present_mode::select_present_mode;
 pub use staging::{
