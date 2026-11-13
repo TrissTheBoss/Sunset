@@ -2,8 +2,8 @@ struct Camera {
     view_proj: mat4x4<f32>,
     fog_start: f32,
     fog_end: f32,
-    fog_color: vec3<f32>,
-    tint_color: vec3<f32>,
+    fog_color: vec4<f32>,
+    tint_color: vec4<f32>,
 };
 
 struct VertexOut {
@@ -19,7 +19,7 @@ struct VertexOut {
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var terrain_textures: texture_2d_array<f32>;
 @group(0) @binding(2) var terrain_sampler: sampler;
-@group(0) @binding(3) var<storage, read> section_origins: array<vec3<f32>>;
+@group(0) @binding(3) var<storage, read> section_origins: array<vec4<f32>>;
 
 fn face_uv(face: u32, position: vec3<f32>) -> vec2<f32> {
     if face == 0u || face == 1u {
@@ -42,7 +42,7 @@ fn vs_main(@location(0) packed: vec2<u32>, @builtin(instance_index) instance: u3
     let layer = ((lo >> 24u) & 0xFFu) | ((hi & 0xFFu) << 8u);
     let tint_index = (hi >> 8u) & 0xFFu;
 
-    let world = section_origins[instance] + vec3<f32>(local);
+    let world = section_origins[instance].xyz + vec3<f32>(local);
     let clip = camera.view_proj * vec4<f32>(world, 1.0);
 
     var out: VertexOut;
@@ -67,13 +67,13 @@ fn ao_factor(ao: u32) -> f32 {
 fn apply_fog(color: vec3<f32>, distance: f32) -> vec3<f32> {
     let span = camera.fog_end - camera.fog_start;
     let factor = clamp((distance - camera.fog_start) / span, 0.0, 1.0);
-    return mix(color, camera.fog_color, factor);
+    return mix(color, camera.fog_color.rgb, factor);
 }
 
 fn shade_texel(texel: vec4<f32>, ao: u32, light: u32, tint_index: u32, distance: f32) -> vec3<f32> {
     var color = texel.rgb;
     if tint_index > 0u {
-        color = color * camera.tint_color;
+        color = color * camera.tint_color.rgb;
     }
     color = color * (light_brightness(light) * ao_factor(ao));
     return apply_fog(color, distance);

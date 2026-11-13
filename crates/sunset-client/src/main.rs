@@ -5,7 +5,10 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sunset_metrics::IntervalRing;
-use sunset_render::{CpuSpan, FrameOutcome, Renderer, RendererInit};
+use sunset_render::{
+    build_terrain_scene, view_projection, CameraUniform, CpuSpan, FrameOutcome, Renderer,
+    RendererInit,
+};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
@@ -156,12 +159,28 @@ impl ApplicationHandler for App {
             ..Default::default()
         };
         match Renderer::new(Arc::clone(&window), &init) {
-            Ok(renderer) => {
+            Ok(mut renderer) => {
                 eprintln!(
                     "adapter: {}; present mode: {}",
                     renderer.adapter_name(),
                     renderer.present_mode_label()
                 );
+                let coords: Vec<(i32, i32, i32)> = (-1..=1)
+                    .flat_map(|sx| (-1..=1).map(move |sz| (sx, 4, sz)))
+                    .collect();
+                let scene = build_terrain_scene(12345, &coords);
+                let vp = view_projection(
+                    [8.0, 70.0, 40.0],
+                    [8.0, 66.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    (70.0f32).to_radians(),
+                    16.0 / 9.0,
+                    0.1,
+                    300.0,
+                );
+                let camera = CameraUniform::new(vp, 10.0, 250.0, [0.7, 0.8, 0.9], [1.0, 1.0, 1.0]);
+                let terrain = renderer.create_terrain(&scene, &camera);
+                renderer.set_terrain(terrain);
                 self.window = Some(window);
                 self.renderer = Some(renderer);
                 self.run_start = Instant::now();

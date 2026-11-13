@@ -1,6 +1,6 @@
 # Progress
 
-Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-212a in progress (next slice: wgpu terrain pipeline + client wiring).
+Current milestone: **M2 IN PROGRESS** (M0/M1 code complete; M0 exit blocked on server jar + owner baseline). Current task: T-212a in progress (terrain renders; next: culling + indirect draws + arena + jobs/budget).
 
 Implementation baseline: fresh rewrite. Results of the previous prototype are not inherited; never carry "M2 complete" from the old implementation into this rewrite.
 
@@ -18,6 +18,7 @@ Implementation baseline: fresh rewrite. Results of the previous prototype are no
 
 | Date | Commit | Scene | Median FPS | p99 / p99.9 (ms) | Result | Run ID |
 | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-13 | — | BENCH-00 manifest, 3×3 terrain (debug build) | ~2,138 | — | terrain renders; WGSL validated at pipeline creation; Wayland present-capped | ad hoc (stdout: 10,689 frames / 5 s) |
 | 2026-11-13 | fe1cf53 | BENCH-00 (clear pass only) | 6,615 | 0.33 / 0.42 | recorded; Wayland present-capped; client does not render terrain yet | 1794591105 |
 | 2026-11-12 | — | BENCH-00 | ~8,460 (release, Immediate) | — | recorded; Wayland present-capped, needs native X11 | ad hoc |
 
@@ -50,6 +51,19 @@ Artifacts (run IDs):
 Blockers:
 Next smallest action:
 ```
+
+### 2026-11-13 · T-212a assemble terrain render path (slice 2: terrain pipeline + client wiring) · IN PROGRESS
+Change: Assembled the terrain render path. `sunset-render::terrain_renderer` provides `CameraUniform` (112-byte WGSL-matched layout, offset-tested) and `TerrainRenderer` (creates the terrain pipeline from `TERRAIN_SHADER` with an 8-byte `Uint32x2` vertex layout, a 9-layer synthetic texture array, a camera uniform, a section-origin storage buffer, and the packed geometry; renders per-section `draw_indexed` using `instance_index` for origin lookup). Switched the WGSL `Camera` colors and `section_origins` to `vec4` to avoid `vec3` uniform/storage alignment pitfalls. Wired `Renderer::create_terrain`/`set_terrain` and the client to build a 3×3 terrain scene + camera and render it.
+Files / commit: crates/sunset-render/src/terrain_renderer.rs (new), crates/sunset-render/shaders/terrain.wgsl (vec4 uniforms/storage), crates/sunset-render/src/lib.rs, crates/sunset-client/src/main.rs.
+Commands and exit codes:
+  cargo test -p sunset-render → 0 (41 tests; new: camera-uniform WGSL layout offsets)
+  cargo clippy --all-targets -- -D warnings → 0
+  cargo xtask check --non-interactive → 0 (fmt/clippy/lint + 118 unit tests)
+  cargo build -p sunset-client --release → 0
+  target/debug/sunset-client bench/scenes/bench-00.toml 0 → 0 (rendered terrain; no WGSL/pipeline validation error; 10,689 frames / 5 s ≈ 2,138 FPS debug on Wayland)
+Artifacts (run IDs): ad hoc debug run (terrain renders).
+Blockers: none for this slice; the terrain path uses direct draws and no culling/arena/budget yet.
+Next smallest action: T-212a slice 3 — frustum culling + multi-draw-indirect + geometry-arena upload + job system + upload budget.
 
 ### 2026-11-13 · T-212a assemble terrain render path (slice 1: camera + scene builder) · IN PROGRESS
 Change: Added the pure, testable foundation for terrain assembly. `sunset-render::camera` provides column-major `Mat4`, `perspective`, `look_at`, `view_projection`, and `transform_point`. `sunset-render::terrain_scene` provides `build_terrain_scene` which generates + greedy-meshes a set of sections and packs them into flat byte/vertex + index buffers with per-section AABB/origin/base_vertex/first_index/index_count (`SceneSection`, `TerrainScene`). Added `sunset-core` as a `sunset-render` dependency (meshers/terrain generator live there).

@@ -14,6 +14,7 @@ mod shader;
 mod shading;
 mod sorting;
 mod staging;
+mod terrain_renderer;
 mod terrain_scene;
 
 pub use allocator::{Range, RangeAllocator};
@@ -34,6 +35,7 @@ pub use sorting::{sort_translucent_back_to_front, TranslucentSection};
 pub use staging::{
     StagingRing, UploadBudget, DEFAULT_UPLOAD_BUDGET_BYTES, DEFAULT_UPLOAD_BUDGET_US,
 };
+pub use terrain_renderer::{CameraUniform, TerrainRenderer};
 pub use terrain_scene::{build_terrain_scene, SceneSection, TerrainScene};
 
 pub struct Renderer {
@@ -46,6 +48,7 @@ pub struct Renderer {
     adapter_name: String,
     gpu_timer: Option<GpuTimer>,
     cpu_trace: CpuTrace,
+    terrain: Option<TerrainRenderer>,
 }
 
 pub struct RendererInit {
@@ -128,9 +131,19 @@ impl Renderer {
             adapter_name,
             gpu_timer,
             cpu_trace: CpuTrace::default(),
+            terrain: None,
         };
         renderer.reconfigure();
         Ok(renderer)
+    }
+
+    pub fn set_terrain(&mut self, terrain: TerrainRenderer) {
+        self.terrain = Some(terrain);
+        self.gpu_timer = None;
+    }
+
+    pub fn create_terrain(&self, scene: &TerrainScene, camera: &CameraUniform) -> TerrainRenderer {
+        TerrainRenderer::new(&self.device, &self.queue, self.config.format, scene, camera)
     }
 
     pub fn adapter_name(&self) -> &str {
@@ -219,27 +232,31 @@ impl Renderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        {
-            let timestamp_writes = self.gpu_timer.as_ref().map(GpuTimer::timestamp_writes);
-            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-        }
-        if let Some(timer) = &mut self.gpu_timer {
-            timer.resolve(&mut encoder);
+        if let Some(terrain) = &self.terrain {
+            terrain.render(&mut encoder, &view);
+        } else {
+            {
+                let timestamp_writes = self.gpu_timer.as_ref().map(GpuTimer::timestamp_writes);
+                let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+            }
+            if let Some(timer) = &mut self.gpu_timer {
+                timer.resolve(&mut encoder);
+            }
         }
         let command_buffer = encoder.finish();
         self.queue.submit([command_buffer]);
